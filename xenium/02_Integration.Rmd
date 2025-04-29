@@ -1,0 +1,120 @@
+---
+title: "Integrate Xenium Project"
+author: "Drake Williams"
+date: "`r BiocStyle::doc_date()`"
+output: html_document
+knit: (function(inputFile, encoding) { 
+    rmarkdown::render(
+        inputFile, encoding = encoding, 
+        output_file = file.path(
+            dirname(inputFile), paste0('02_Integration_',Sys.Date(),'.html'))) 
+                })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = F,
+                      message = F, 
+                      out.width = "100%", 
+                      fig.align='center')
+options(width = 1200)
+```
+
+# Introduction
+
+The objective of this notebook is to use different methods to integrate the datasets (to use later for comparison). 
+
+## Load packages
+
+```{r load packages}
+library(pacman)
+p_load(Seurat,tictoc)
+options(Seurat.object.assay.version = "v5")
+options(future.globals.maxSize = 1e12)
+```
+
+## Set directory
+```{r load data}
+tic()
+setwd('/home/williamsdrw/xenium-hu-hvp')
+scCustomize::Setup_scRNAseq_Project(custom_dir_file = "/home/williamsdrw/xenium-hu-hvp/xen_dirs.csv")
+baseDir <- "/home/williamsdrw/xenium-hu-hvp/04_data_objects/"
+
+# find the most recent file to load
+list <- file.info(list.files(paste0(baseDir,"01_Setup/") ,full.names = T))
+print(paste0("Loading the most recent file: ", rownames(list)[which.max(list$mtime)]))
+combined <- readRDS(rownames(list)[which.max(list$mtime)])
+toc()
+```
+
+
+```{r typical norm workflow}
+## About 1.5h with run1 and run2 xenium health vs perio (~800k cells)
+
+tic()
+# split Xenium measurements into individual layers for each 'region'
+combined[["Xenium"]] <- JoinLayers(combined[["Xenium"]])
+combined[["Xenium"]] <- split(combined[["Xenium"]], f = combined$orig.ident)
+
+print("Normalize")
+combined <- NormalizeData(combined)
+print("Find Variable Features")
+combined <- FindVariableFeatures(combined)
+print("Scale Data")
+combined <- ScaleData(combined)
+print("Run PCA")
+combined <- RunPCA(combined)
+
+print("Find Neighbors")
+combined <- FindNeighbors(combined, dims = 1:30, reduction = "pca")
+print("Find Clusters")
+combined <- FindClusters(combined, resolution = 0.5, cluster.name = "unintegrated_clusters")
+
+print("Run UMAP")
+combined <- RunUMAP(combined, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+DimPlot(combined, reduction = "umap.unintegrated", group.by = c("orig.ident", "seurat_clusters"))
+
+saveRDS(combined, file = paste0(baseDir, "02_Integration/temp1.RDS"))
+toc()
+```
+
+```{r integrate}
+# about 12h with 800k cells
+tic()
+# # approx 2h with 400k cells from xenium
+# combined <- IntegrateLayers(object = combined, method = HarmonyIntegration, orig.reduction = "pca", new.reduction = "integrated.ha",
+#     verbose = TRUE)
+# saveRDS(combined, file = paste0(baseDir, "02_Clustering/temp2.RDS"))
+# # currently gives error: this S4 class is not subsettable
+# combined <- IntegrateLayers(object = combined, method = FastMNNIntegration, orig.reduction = "pca", new.reduction = "integrated.mnn",
+#     verbose = TRUE)
+# saveRDS(combined, file = paste0(baseDir, "02_Clustering/temp3.RDS"))
+
+# approx 2h with 400k cells from xenium
+print("Integrate Layers")
+combined <- IntegrateLayers(object = combined, method = RPCAIntegration, orig.reduction = "pca", new.reduction = "integrated.rpca",
+    verbose = TRUE)
+saveRDS(combined, file = paste0(baseDir, "02_Integration/temp4.RDS"))
+
+# re-join layers after integration
+combined[["Xenium"]] <- JoinLayers(combined[["Xenium"]])
+toc()
+
+```
+
+## Save dataset
+```{r save seurat}
+# The cell IDs become 'orig.ident' in the metadata
+saveRDS(combined, file = paste0(baseDir, "02_Integration/", Sys.Date(), "_02.RDS"))
+# remove temp files
+file.remove(paste0(baseDir, "02_Integration/temp1.RDS"))
+# file.remove(paste0(baseDir, "02_Integration/temp2.RDS"))
+# file.remove(paste0(baseDir, "02_Integration/temp3.RDS"))
+file.remove(paste0(baseDir, "02_Integration/temp4.RDS"))
+```
+
+## Session Info
+```{r session info}
+sessionInfo()
+```
+

@@ -1,0 +1,127 @@
+---
+title: "Clustering Xenium Project"
+author: "Drake Williams"
+date: "`r BiocStyle::doc_date()`"
+output: html_document
+knit: (function(inputFile, encoding) { 
+    rmarkdown::render(
+        inputFile, encoding = encoding, 
+        output_file = file.path(
+            dirname(inputFile), paste0('03_Clustering_',Sys.Date(),'.html'))) 
+                })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = F,
+                      message = F, 
+                      out.width = "100%", 
+                      fig.align='center')
+options(width = 1200)
+```
+```{css, echo=FALSE}
+pre, code {white-space:pre !important; overflow-x:auto}
+```
+# Introduction
+
+The objective of this notebook is to cluster the integrated xenium datasets, visualize the results and export lists for use in cluster annotation 
+
+## Load packages
+
+```{r load packages}
+library(pacman)
+p_load(Seurat, scCustomize, SeuratObject, stringr, dplyr, data.table, clustree, tictoc)
+options(Seurat.object.assay.version = "v5")
+options(future.globals.maxSize = 1e12)
+```
+
+## Set directory
+```{r load data}
+baseDir <- "/home/williamsdrw/xenium-hu-hvp/04_data_objects/"
+
+# find the most recent file to load
+list <- file.info(list.files(paste0(baseDir,"02_Integration/") ,full.names = T))
+print(paste0("Loading the most recent file: ", rownames(list)[which.max(list$mtime)]))
+combined <- readRDS(rownames(list)[which.max(list$mtime)])
+```
+
+
+```{r cluster}
+tic()
+combined <- FindNeighbors(combined, reduction = "integrated.rpca", dims = 1:30)
+# use parallel processing to speed things up
+plan("multicore", workers = 10)
+combined <- FindClusters(combined, 
+                         resolution = 1
+                         )
+combined <- RunUMAP(combined, reduction = "integrated.rpca", dims = 1:30, reduction.name = "umap.rpca")
+toc()
+``` 
+
+```{r visualize clusters, fig.width=12, fig.height=5}
+print("Unintegrated vs Sample")
+print(table(combined$unintegrated_clusters, combined$orig.ident))
+print("RPCA (r1) vs Sample")
+print(table(combined$Xenium_snn_res.1, combined$orig.ident))
+
+combined$rpca_clusters_1 <- combined$Xenium_snn_res.1
+
+ord <- order(levels(combined$rpca_clusters_1)) - 1
+combined$rpca_clusters_1 <- factor(combined$rpca_clusters_1, levels = ord)
+
+DimPlot(
+  combined,
+  reduction = "umap.rpca",
+  group.by = c("orig.ident", "rpca_clusters_1"),
+  combine = T, label.size = 2
+)
+DimPlot(
+  combined,
+  reduction = "umap.unintegrated",
+  group.by = c("orig.ident", "unintegrated_clusters"),
+  combine = T, label.size = 2
+)
+```
+
+
+
+```{r cluster markers}
+Idents(combined) <- "rpca_clusters_1"
+feat1 <- FindAllMarkers(combined, only.pos = T, verbose = T)
+feat1_logfc <- feat1 %>%
+  group_by(cluster) %>%
+  top_n(n = 20, wt = avg_log2FC) %>%
+  arrange(cluster, desc(avg_log2FC))
+feat1_pct <- feat1 %>%
+  group_by(cluster) %>%
+  top_n(n = 10, wt = pct.1) %>%
+  arrange(cluster, desc(pct.1))
+fwrite(feat1_pct, file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/", Sys.Date(), "_rpca_top10PCT_allMarkers_r1.csv"))
+fwrite(feat1_logfc, file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/", Sys.Date(), "_rpca_topLOG2FC_allMarkers_r1.csv"))
+fwrite(feat1, file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/", Sys.Date(), "_rpca_allMarkers_r1.csv"))
+```
+
+```{r get dimplot for each cluster, fig.height=10, fig.width=10}
+setwd('/home/williamsdrw/xenium-hu-hvp')
+Cluster_Highlight_Image_DimPlot(combined,
+                                  fov = names(combined@images)[c(3)],
+                                  split_by = "orig.ident",
+                                  cluster_level = "rpca_clusters_1",
+                                  isPdf = T,
+                                  size = 0.05,
+                                  w = 24,
+                                  h = 20)
+```
+
+
+## Save dataset
+```{r save seurat}
+# The cell IDs become 'orig.ident' in the metadata
+saveRDS(combined, file = paste0(baseDir, "03_Clustering/", Sys.Date(), "_03.RDS"))
+```
+
+## Session Info
+```{r session info}
+sessionInfo()
+```
+

@@ -1,0 +1,618 @@
+---
+title: "Setup Xenium Project Run 1- HPC"
+author: "Drake Williams"
+date: "`r BiocStyle::doc_date()`"
+output: html_document
+knit: (function(inputFile, encoding) { 
+    rmarkdown::render(
+        inputFile, encoding = encoding, 
+        output_file = file.path(
+            dirname(inputFile), paste0('01_Setup_HPC_',Sys.Date(),'.html'))) 
+                })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = F,
+                      message = F, 
+                      out.width = "100%", 
+                      fig.align='center')
+options(width = 1200)
+```
+
+# Introduction
+
+The objective of this notebook is to 
+1. crop the regions of interest so that only one section is present in each region
+2. remove unnecessary files to save space (all xeniumranger files and duplicates)
+3. load xenium files into Seurat. I normally do this on the BRICS server but I am unable to transfer large files there now so instead I did this on Biowulf (HPC). 
+
+## Load packages
+
+```{r load packages}
+library(pacman)
+p_load(Seurat, data.table, scCustomize, sf,dplyr)
+options(Seurat.object.assay.version = "v5")
+options(future.globals.maxSize = 1e12)
+source('/data/williamsdrw/xenium/xenHelpers.R')
+```
+
+
+
+## Crop regions from run 1, 0um
+```{r crop region 1 5um, eval=FALSE}
+
+
+##s1r1
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s1r1/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s1r1_a/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s1r1_a_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s1r1/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s1r1_b/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s1r1_b_coordinates.csv')
+
+##s1r2
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s1r2/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s1r2/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s1r2_coordinates.csv')
+
+##s1r3
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s1r3/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s1r3/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s1r3_coordinates.csv')
+
+##s1r5
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s1r5/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s1r5/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s1r5_coordinates.csv')
+
+##s1r6
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s1r6/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s1r6/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s1r6_coordinates.csv')
+
+##s2r1
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r1/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r1_HV203/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r1_HV203_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r1/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r1_HV207/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r1_HV207_coordinates.csv')
+
+##s2r2
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r2/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r2_HV137/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r2_HV137_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r2/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r2_HV184/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r2_HV184_coordinates.csv')
+
+##s2r3
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r3/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r3/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r3_coordinates.csv')
+
+##s2r4
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r4/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r4_a/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r4_a_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r4/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r4_b/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r4_b_coordinates.csv')
+
+##s2r5
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r5/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r5/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r5_coordinates.csv')
+
+##s2r7
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r7/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r7_a/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r7_a_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r7/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r7_b/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r7_b_coordinates.csv')
+
+##s2r8
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r8/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r8_HV185/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r8_HV185_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r8/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r8_HV211/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r8_HV211_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r8/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r8_HV188_a/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r8_HV188_a_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r8/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r8_HV188_b/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r8_HV188_b_coordinates.csv')
+
+##s2r9
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r9/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r9_a/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r9_a_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um/s2r9/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_0um_crop/s2r9_b/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_crop_coords/s2r9_b_coordinates.csv')
+
+```
+
+## Crop regions from run 1, 15um
+```{r crop region 1 15um, eval=FALSE}
+
+
+##s1r1
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s1r1',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s1r1_a/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s1r1_a_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s1r1/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s1r1_b/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s1r1_b_coordinates.csv')
+
+##s1r2
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s1r2',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s1r2/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s1r2_coordinates.csv')
+
+##s1r3
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s1r3',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s1r3/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s1r3_coordinates.csv')
+
+##s1r5
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s1r5',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s1r5/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s1r5_coordinates.csv')
+
+##s1r6
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s1r6',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s1r6/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s1r6_coordinates.csv')
+
+##s2r1
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r1',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r1_HV203/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r1_HV203_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r1',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r1_HV207/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r1_HV207_coordinates.csv')
+
+##s2r2
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r2',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r2_HV137/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r2_HV137_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r2',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r2_HV184/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r2_HV184_coordinates.csv')
+
+##s2r3
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r3',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r3/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r3_coordinates.csv')
+
+##s2r4
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r4',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r4_a/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r4_a_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r4',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r4_b/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r4_b_coordinates.csv')
+
+##s2r5
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r5',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r5/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r5_coordinates.csv')
+
+##s2r7
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r7',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r7_a/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r7_a_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r7',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r7_b/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r7_b_coordinates.csv')
+
+##s2r8
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r8',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r8_HV185/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r8_HV185_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r8',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r8_HV211/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r8_HV211_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r8',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r8_HV188_a/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r8_HV188_a_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r8',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r8_HV188_b/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r8_HV188_b_coordinates.csv')
+
+##s2r9
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r9',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r9_a/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r9_a_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um/s2r9',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_15um_crop/s2r9_b/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run1_5um/s2r9_b_coordinates.csv')
+
+```
+
+
+
+## Generate run1 seurat object list
+```{r run1 seurat}
+# get the full directory list to pick out folders with data to be analyzed
+dirList <- list.dirs(path = paste0('/data/williamsdrw/xenium/run1_0um_crop'), full.names = TRUE, recursive = F)
+
+region <- list.dirs(path = paste0('/data/williamsdrw/xenium/run1_0um_crop'), full.names = F, recursive = F)
+
+print("These are the directories that will be used to generate a xenium seurat object. Double check for errors.")
+print(dirList)
+
+xenList <- list()
+areaList <- data.frame()
+for(i in seq_along(dirList)){
+  obj <- LoadXenium(data.dir = paste0(dirList[i]), fov = region[i])
+  obj$orig.ident <- region[i]
+  all_files <- list.files(dirList[i], recursive = TRUE, full.names = TRUE)
+  cells_file <- all_files[grepl("cells.csv.gz", all_files)]
+  expanded_files <- list.files(paste0('/data/williamsdrw/xenium/run1_15um_crop/',region[i]), recursive = TRUE, full.names = TRUE)
+  expanded_cellfile <- expanded_files[grepl("cells.csv.gz", expanded_files)]
+  expanded_kmeans <- expanded_files[grepl("clusters.csv", expanded_files)]
+  expanded_de <- expanded_files[grepl("expression.csv", expanded_files)]
+  areaMeta <- obtain_cell_area(cells_file)
+  expanded_area <- kmeans_area(expanded_cellfile,
+                               expanded_kmeans,
+                               expanded_de)
+  expanded_area$orig.ident <- region[i]
+  obj <- AddMetaData(obj, areaMeta)
+  obj <- subset(obj, nCount_Xenium > 0)
+  xenList[i] <- obj
+  areaList <- bind_rows(areaList, expanded_area)
+}
+
+```
+
+## Crop regions from run 2, 0um
+```{r crop region 2 5um, eval=FALSE}
+
+##HV137
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV137A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV137A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV137A_coordinates.csv')
+
+##HV140
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV140A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV140A_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV140A_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV140A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV140A_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV140A_B_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV140A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV140A_C/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV140A_C_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV140A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV140A_D/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV140A_D_coordinates.csv')
+
+##HV160
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV160C/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV160C_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV160C_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV160C/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV160C_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV160C_B_coordinates.csv')
+
+##HV171
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV171A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV171A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV171A_coordinates.csv')
+
+##HV192
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV192A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV192A_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV192A_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV192A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV192A_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV192A_B_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV192A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV192A_C/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV192A_C_coordinates.csv')
+
+##HV198B
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV198B/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV198B_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV198B_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV198B/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV198B_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV198B_B_coordinates.csv')
+
+##HV191A
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV205B_HV191A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV191A_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV191A_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV205B_HV191A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV191A_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV191A_B_coordinates.csv')
+
+##HV205B
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV205B_HV191A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV205B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV205B_coordinates.csv')
+
+##HV205A
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/LAD11_HV205A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV205A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV205A_coordinates.csv')
+
+##HV219AB
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV219AB/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV219AB_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV219AB_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV219AB/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV219AB_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV219AB_B_coordinates.csv')
+
+##HV219AS
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV219AS/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV219AS_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV219AS_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV219AS/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV219AS_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV219AS_B_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV219AS/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV219AS_C/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV219AS_C_coordinates.csv')
+
+##HV220
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV220A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV220A_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV220A_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/HV220A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/HV220A_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/HV220A_B_coordinates.csv')
+
+##LAD1
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/LAD1/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/LAD1/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/LAD1_coordinates.csv')
+
+##LAD7
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/LAD7A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/LAD7A_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/LAD7A_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/LAD7A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/LAD7A_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/LAD7A_B_coordinates.csv')
+
+##LAD8
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/LAD8/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/LAD8/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/LAD8_coordinates.csv')
+
+##LAD11
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/LAD11_HV205A/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/LAD11/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/LAD11_coordinates.csv')
+
+##LAD132B
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um/LAD132B/outs/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_0um_crop/LAD132B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/LAD132B_coordinates.csv')
+
+```
+## Crop regions from run 2, 15um
+```{r crop region 2 15um, eval=FALSE}
+
+##HV137
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV137A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV137A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV137A_coordinates.csv')
+
+##HV140
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV140A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV140A_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV140A_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV140A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV140A_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV140A_B_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV140A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV140A_C/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV140A_C_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV140A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV140A_D/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV140A_D_coordinates.csv')
+
+##HV160
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV160C/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV160C_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV160C_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV160C/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV160C_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV160C_B_coordinates.csv')
+
+##HV171
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV171A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV171A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV171A_coordinates.csv')
+
+##HV192
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV192A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV192A_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV192A_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV192A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV192A_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV192A_B_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV192A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV192A_C/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV192A_C_coordinates.csv')
+
+##HV198B
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV198B/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV198B_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV198B_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV198B/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV198B_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV198B_B_coordinates.csv')
+
+##HV191A
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV205B_HV191A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV191A_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV191A_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV205B_HV191A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV191A_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV191A_B_coordinates.csv')
+
+##HV205B
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV205B_HV191A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV205B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV205B_coordinates.csv')
+
+##HV205A
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/LAD11_HV205A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV205A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV205A_coordinates.csv')
+
+##HV219AB
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV219AB/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV219AB_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV219AB_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV219AB/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV219AB_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV219AB_B_coordinates.csv')
+
+##HV219AS
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV219AS/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV219AS_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV219AS_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV219AS/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV219AS_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV219AS_B_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV219AS/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV219AS_C/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV219AS_C_coordinates.csv')
+
+##HV220
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV220A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV220A_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV220A_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/HV220A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/HV220A_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/HV220A_B_coordinates.csv')
+
+##LAD1
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/LAD1/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/LAD1/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/LAD1_coordinates.csv')
+
+##LAD7
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/LAD7A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/LAD7A_A/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_5um/LAD7A_A_coordinates.csv')
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/LAD7A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/LAD7A_B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/LAD7A_B_coordinates.csv')
+
+##LAD8
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/LAD8/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/LAD8/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/LAD8_coordinates.csv')
+
+##LAD11
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/LAD11_HV205A/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/LAD11/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/LAD11_coordinates.csv')
+
+##LAD132B
+cropRegion_complex('/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um/LAD132B/outs',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_15um_crop/LAD132B/',
+           '/gpfs/gsfs12/users/williamsdrw/xenium/run2_crop_coords/LAD132B_coordinates.csv')
+
+```
+
+## Generate run2 seurat object list, excluding LAD
+```{r run2 seurat}
+# get the full directory list to pick out folders with data to be analyzed
+dirList <- list.dirs(path = paste0('/data/williamsdrw/xenium/run2_0um_crop'), full.names = TRUE, recursive = F)
+dirListHP <- dirList[!grepl("LAD", dirList)]
+
+region <- list.dirs(path = paste0('/data/williamsdrw/xenium/run2_0um_crop'), full.names = F, recursive = F)
+regionHP <- region[!grepl("LAD", region)]
+
+
+print("These are the directories that will be used to generate a xenium seurat object. Double check for errors.")
+print(dirListHP)
+
+xenList2 <- list()
+for(i in seq_along(dirListHP)){
+  obj <- LoadXenium(data.dir = paste0(dirListHP[i]), fov = regionHP[i])
+  obj$orig.ident <- regionHP[i]
+  all_files <- list.files(dirListHP[i], recursive = TRUE, full.names = TRUE)
+  cells_file <- all_files[grepl("cells.csv.gz", all_files)]
+  expanded_files <- list.files(paste0('/data/williamsdrw/xenium/run2_15um_crop/',regionHP[i]), recursive = TRUE, full.names = TRUE)
+  expanded_cellfile <- expanded_files[grepl("cells.csv.gz", expanded_files)]
+  expanded_kmeans <- expanded_files[grepl("clusters.csv", expanded_files)]
+  expanded_de <- expanded_files[grepl("expression.csv", expanded_files)]
+  areaMeta <- obtain_cell_area(cells_file)
+  if(!identical(expanded_files, character(0))){
+   expanded_area <- kmeans_area(expanded_cellfile,
+                               expanded_kmeans,
+                               expanded_de)
+   expanded_area$orig.ident <- regionHP[i] 
+   areaList <- bind_rows(areaList, expanded_area)
+  }
+  obj <- AddMetaData(obj, areaMeta)
+  obj <- subset(obj, nCount_Xenium > 0)
+  xenList2[i] <- obj
+}
+
+combined <- Merge_Seurat_List(c(xenList,xenList2), add.cell.ids = seq(1,length(c(xenList2,xenList)),1), merge.data = F)
+combined <- Store_Misc_Info_Seurat(seurat_object = combined, data_to_store = areaList, data_name = "expanded_area_kmeans2")
+
+fwrite(areaList, file='/data/williamsdrw/xenium/expandedArea_cellLevel_metadata_HP.csv')
+saveRDS(combined, file=paste0("/gpfs/gsfs12/users/williamsdrw/xenium/", Sys.Date, "-run1_run2_0um_HP.rds"))
+```
+
+```{r}
+dirListLAD <- dirList[grepl("LAD", dirList)]
+regionLAD <- region[grepl("LAD", region)]
+
+print("These are the directories that will be used to generate a xenium seurat object. Double check for errors.")
+print(dirListLAD)
+
+areaList2 <- list()
+xenList3 <- list()
+for(i in seq_along(dirListLAD)){
+  obj <- LoadXenium(data.dir = paste0(dirListLAD[i]), fov = regionLAD[i])
+  obj$orig.ident <- regionLAD[i]
+  all_files <- list.files(dirListLAD[i], recursive = TRUE, full.names = TRUE)
+  cells_file <- all_files[grepl("cells.csv.gz", all_files)]
+  expanded_files <- list.files(paste0('/data/williamsdrw/xenium/run2_15um_crop/',regionLAD[i]), recursive = TRUE, full.names = TRUE)
+  expanded_cellfile <- expanded_files[grepl("cells.csv.gz", expanded_files)]
+  expanded_kmeans <- expanded_files[grepl("clusters.csv", expanded_files)]
+  expanded_de <- expanded_files[grepl("expression.csv", expanded_files)]
+  areaMeta <- obtain_cell_area(cells_file)
+  if(!identical(expanded_files, character(0))){
+   expanded_area <- kmeans_area(expanded_cellfile,
+                               expanded_kmeans,
+                               expanded_de)
+   expanded_area$orig.ident <- regionLAD[i] 
+   areaList2 <- bind_rows(areaList2, expanded_area)
+  }
+  obj <- AddMetaData(obj, areaMeta)
+  obj <- subset(obj, nCount_Xenium > 0)
+  xenList3[i] <- obj
+}
+
+combined2 <- Merge_Seurat_List(c(xenList3), add.cell.ids = seq(1,length(c(xenList3)),1), merge.data = F)
+combined2 <- Store_Misc_Info_Seurat(seurat_object = combined2, data_to_store = areaList2, data_name = "expanded_area_kmeans2")
+
+fwrite(areaList2, file='/data/williamsdrw/xenium/expandedArea_cellLevel_metadata_LAD.csv')
+saveRDS(combined2, file=paste0("/gpfs/gsfs12/users/williamsdrw/xenium/", Sys.Date(), "-run1_run2_0um_LAD.rds"))
+
+```
+
+
+## Session Info
+```{r session info}
+sessionInfo()
+```
+

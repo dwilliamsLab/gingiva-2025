@@ -1,0 +1,730 @@
+---
+title: "Analyze external datasets"
+author: "Drake Williams"
+date: "`r BiocStyle::doc_date()`"
+output:   
+  pdf_document:
+    dev: cairo_pdf
+knit: (function(inputFile, encoding) { 
+    rmarkdown::render(
+        inputFile, encoding = encoding, 
+        output_file = file.path(
+            dirname(inputFile), paste0('05_02_ExternalDataAnalysis_',Sys.Date(),'.html'))) 
+                })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = F,
+  message = F, 
+  out.width = "100%",
+  fig.align = "center",
+  time_it = T
+)
+options(width = 1200)
+```
+
+# Introduction
+
+The objective of this notebook is to load datasets from CZI CELLxGENE and change ENSEMBL gene names to gene symbols
+
+## Load packages
+
+```{r load packages}
+# load packages
+library(pacman)
+p_load(Seurat, 
+       scCustomize, 
+       dplyr, 
+       org.Hs.eg.db, 
+       ggpubr,
+       data.table,
+       paletteer,
+       Cairo,
+       rstatix,
+       SCP,
+       tidyverse,
+       msigdbr,
+       gsfisher)
+
+# devtools::install_version("crossmatch", version = "1.3.1", repos = "http://cran.us.r-project.org")
+# devtools::install_version("multicross", version = "2.1.0", repos = "http://cran.us.r-project.org")
+# devtools::install_github("jackbibby1/SCPA")
+
+# packages <- c("clustermole","singscore")
+# BiocManager::install(packages)
+source("~/epithelial-IL23/01_scripts/analysisHelpers.R")
+```
+# Import all CZI datasets
+```{r generate czi seurat list}
+folder <- "/home/williamsdrw/epithelial-IL23/02_raw_data/czi/"
+seurat_objects <- read_rds_files(folder)
+```
+
+## Modify metadata and trim CZI datasets
+### Yoshida 2022
+```{r y, fig.width=10, fig.height=5}
+# modify metadata
+seurat_objects[[1]]$ref <- "Yoshida 2022"
+seurat_objects[[1]]$source <- "czi_cellxgene"
+meta <- seurat_objects[[1]]$sample_id
+meta <- gsub("_", "-", as.character(meta))
+seurat_objects[[1]]$orig.ident <- meta
+
+# extract epithelial cells
+Idents(seurat_objects[[1]]) <- "Cell_type_annotation_level1"
+seurat_objects[[1]] <- subset(seurat_objects[[1]], idents = "Epi")
+# define the number of total cells to downsample by
+# seurat_objects[[1]] <- downsampleSeurat(seurat_objects[[1]], indx)
+seurat_objects[[1]] <- convertEnsemblRownames(seurat_objects[[1]])
+
+
+
+# generate a seurat object with bulk expression based on cell type, disease status, and donor
+bulk <- getBulkExpression(seu = seurat_objects[[1]],
+                          cellType = "cell_type",
+                          donor = "orig.ident",
+                          disease = "disease",
+                          diseaseLevels = c("COVID-19", "normal"))
+Idents(bulk) <- "celltype"
+bulk <- subset(bulk,
+               idents = c("neuroendocrine cell",
+                          "melanocyte",
+                          "duct epithelial cell",
+                          "native cell",
+                          "dendritic cell",
+                          "pulmonary ionocyte"),
+               invert = T)
+Idents(bulk) <- "disease"
+bulk <- subset(bulk,
+               idents = c("normal"))
+
+
+
+VlnPlot_scCustom(bulk, features = c("CXCL1", "CXCL2", "CXCL6"),
+                 pt.size = 0.5,
+                 colors_use = c("Red", "Gray"),
+                 group.by = "celltype",
+                 split.by = "disease") 
+# stat_compare_means(method = "t.test",
+#                    label = "p.signif",
+#                      label.y = 6.75) +
+#   theme(axis.title.y = element_blank(),
+#         axis.title.x = element_blank(),
+#         axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=0.5),
+#         legend.position = "none") +
+#   scale_y_continuous(breaks=seq(0,8,2),
+#                      limits=c(0, 7.25)) +
+#   coord_flip()
+
+# # cell types on y axis: fig.width=5.5, fig.height=7
+# cairo_pdf(filename="/home/williamsdrw/epithelial-IL23/08_final_plots_for_figures/IL23A-Yoshida2022-lungCOVID.pdf",
+#           width=4,
+#           height=3)
+# lungYosh
+# dev.off()
+# 
+# yoshStat <- ggplot_build(lungYosh)
+
+# pws <- c("kegg", "reactome", "biocarta", "wiki", "pid")
+# pathways <- msigdbr("Homo sapiens") %>%
+#   filter(grepl(paste(pws, collapse = "|"), gs_subcat, ignore.case = T) |
+#            grepl("HALLMARK", x = gs_name, ignore.case = T)) %>%
+#   format_pathways()
+# 
+# scpa_out <- compare_seurat(bulk,
+#                            group1 = "celltype", 
+#                            group1_population = c(unique(bulk$celltype)),
+#                            pathways = pathways)
+
+
+```
+```{r, fig.height=8, fig.width=20}
+bulk <- RunDEtest(srt = bulk, group_by = "celltype", fc.threshold = 1, only.pos = FALSE)
+bulk <- RunEnrichment(
+  srt = bulk, group_by = "celltype", db = "GO_BP", species = "Homo_sapiens",
+  DE_threshold = "avg_log2FC > log2(1.5) & p_val_adj < 0.05"
+)
+EnrichmentPlot(
+  srt = bulk, group_by = "celltype", group_use = c(unique(bulk$celltype)),
+  plot_type = "bar"
+)
+
+EnrichmentPlot(srt = bulk, group_by = "celltype", plot_type = "comparison")
+
+
+Idents(bulk) <- "celltype"
+yosh.expressed <- getExpressedGenesFromSeuratObject(bulk, 
+                                                    unique(bulk@active.ident), 
+                                                    min.pct = 0.25)
+#annotation <- fetchAnnotation(species = "hs")
+
+yoshMarkers.gsf <- FindAllMarkers(bulk, 
+                                  only.pos = TRUE, 
+                                  min.pct = 0.25, 
+                                  logfc.threshold = 0.25)
+yoshMarkers.gsf$entrezID <- as.character(annotation$entrez_id[match(yoshMarkers.gsf$gene, 
+                                                                    annotation$gene_name)])
+yoshMarkers.gsf <- yoshMarkers.gsf[!is.na(yoshMarkers.gsf$entrezID),]
+background_entrez <- as.character(annotation$entrez_id[match(yosh.expressed, 
+                                                             annotation$gene_name)])
+background_entrez <- background_entrez[!is.na(background_entrez)]
+
+yoshMarkers.gsf.filtered <- yoshMarkers.gsf[yoshMarkers.gsf$p_val_adj < 0.05,]
+yoshGO <- runGO.all(results=yoshMarkers.gsf.filtered,
+                    species = "hs",
+                    background_ids = background_entrez,
+                    gene_id_col="entrezID",
+                    gene_id_type="entrez",
+                    sample_col="cluster",
+                    p_col="p_val_adj",
+                    p_threshold=0.05)
+
+yoshGO.filtered <- yoshGO[yoshGO$ontology=="BP",]
+yoshGO.filtered <- filterGenesets(yoshGO.filtered,
+                                  min_foreground_genes = 2,
+                                  max_genes_geneset = 500,
+                                  min_odds_ratio = 2,
+                                  p_col = "p.val",
+                                  padjust_method = "BH",
+                                  use_adjusted_pvalues = FALSE,
+                                  pvalue_threshold = 0.05)
+```
+
+### Chan 2021
+```{r c, fig.width=6.5, fig.height=4.5, eval = F, echo=F}
+seurat_objects[[2]]$ref <- "Chan 2021"
+seurat_objects[[2]]$source <- "czi_cellxgene"
+meta <- seurat_objects[[2]]$donor_id
+meta <- gsub("_", "-", as.character(meta))
+seurat_objects[[2]]$orig.ident <- meta
+# extract epithelial cells
+Idents(seurat_objects[[2]]) <- "cell_type"
+seurat_objects[[2]] <- subset(seurat_objects[[2]], idents = c("ionocyte", "hepatocyte", "neuroendocrine cell"), invert = T)
+
+# seurat_objects[[2]] <- downsampleSeurat(seurat_objects[[2]], indx)
+seurat_objects[[2]] <- convertEnsemblRownames(seurat_objects[[2]])
+
+# generate a seurat object with bulk expression based on cell type, disease status, and donor
+bulk <- getBulkExpression(seu = seurat_objects[[2]],
+                          cellType = "cell_type",
+                          donor = "orig.ident",
+                          disease = "disease",
+                          diseaseLevels = c("normal", "lung adenocarcinoma", "small cell lung carcinoma"))
+
+Idents(bulk) <- "disease"
+bulk <- subset(bulk,
+               idents = c("normal"))
+
+
+
+VlnPlot_scCustom(bulk, features = c("CXCL1", "CXCL2", "CXCL6"),
+                 pt.size = 0.5,
+                 colors_use = c("Red", "Gray"),
+                 group.by = "celltype",
+                 split.by = "disease") 
+# # cell types on x axis: fig.width=6.5, fig.height=4.5
+# VlnPlot_scCustom(bulk, features = c("IL23A"),
+#                  pt.size = 0.5,
+#                  colors_use = c("Grey", "Red"),
+#                  group.by = "celltype",
+#                  split.by = "disease",
+#                  y.max = 8) +
+#   stat_compare_means(method = "anova",
+#                      label = "p.signif") +
+#   theme(axis.title.x = element_blank(),
+#         axis.text.x = element_text(angle = 45))
+# # cell types on y axis: fig.width=6.5, fig.height=4.5
+# VlnPlot_scCustom(bulk, features = c("IL23A"),
+#                  pt.size = 0.5,
+#                  colors_use = c("Grey", "Red"),
+#                  group.by = "celltype",
+#                  split.by = "disease",
+#                  y.max = 8) +
+#   stat_compare_means(method = "anova",
+#                      label = "p.signif") +
+#   theme(axis.title.y = element_blank()) +
+#   coord_flip()
+```
+
+### Kong 2023 - Colon
+```{r k, fig.width=4.5, fig.height=3}
+seurat_objects[[3]]$ref <- "Kong 2023"
+seurat_objects[[3]]$source <- "czi_cellxgene"
+meta <- seurat_objects[[3]]$biosample_id
+meta <- gsub("_", "-", as.character(meta))
+seurat_objects[[3]]$orig.ident <- meta
+
+# seurat_objects[[3]] <- downsampleSeurat(seurat_objects[[3]], indx)
+seurat_objects[[3]] <- convertEnsemblRownames(seurat_objects[[3]])
+
+# generate a seurat object with bulk expression based on cell type, disease status, and donor
+bulk <- getBulkExpression(seu = seurat_objects[[3]],
+                          cellType = "cell_type",
+                          donor = "orig.ident",
+                          disease = "disease",
+                          diseaseLevels = c("Crohn disease", "normal"))
+
+Idents(bulk) <- "disease"
+bulk <- subset(bulk,
+               idents = c("normal"))
+
+VlnPlot_scCustom(bulk, features = c("CXCL1", "CXCL2", "CXCL6"),
+                 pt.size = 0.5,
+                 colors_use = c("Red", "Gray"),
+                 group.by = "celltype",
+                 split.by = "disease") 
+
+# # cell types on x axis: fig.width=6.5, fig.height=4.5
+# VlnPlot_scCustom(bulk, features = c("IL23A"),
+#                  pt.size = 0.5,
+#                  colors_use = c("Grey", "Red"),
+#                  group.by = "celltype",
+#                  split.by = "disease",
+#                  y.max = 3) +
+#   stat_compare_means(method = "anova",
+#                      label = "p.signif") +
+#   theme(axis.title.x = element_blank(),
+#         axis.text.x = element_text(angle = 45))
+# cell types on y axis: fig.width=6.5, fig.height=4.5
+# colon <- VlnPlot_scCustom(bulk, features = c("IL23A"),
+#                  pt.size = 0.5,
+#                  colors_use = c("Red", "Gray"),
+#                  group.by = "celltype",
+#                  split.by = "disease",
+#                  y.max = 6) +
+#   stat_compare_means(method = "t.test",
+#                      label = "p.signif",
+#                      label.y = 5.75) +
+#   theme(axis.title.y = element_blank(),
+#         axis.title.x = element_blank(),
+#         axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=0.5)) +
+#   coord_flip()
+# 
+# # cell types on y axis: fig.width=5.5, fig.height=7
+# cairo_pdf(filename="/home/williamsdrw/epithelial-IL23/08_final_plots_for_figures/IL23A-Kong2023-colon.pdf",
+#           width=4.5,
+#           height=3)
+# colon  
+# dev.off()
+
+```
+### Sikkema 2023
+```{r s, fig.width=7, fig.height=3}
+seurat_objects[[4]]$ref <- "Sikkema 2023"
+seurat_objects[[4]]$source <- "czi_cellxgene"
+meta <- seurat_objects[[4]]$sample
+meta <- gsub("_", "-", as.character(meta))
+seurat_objects[[4]]$orig.ident <- meta
+# extract epithelial cells
+Idents(seurat_objects[[4]]) <- "ann_coarse"
+seurat_objects[[4]] <- subset(seurat_objects[[4]], idents = c("Epithelial cell"))
+
+# seurat_objects[[4]] <- downsampleSeurat(seurat_objects[[4]], indx)
+seurat_objects[[4]] <- convertEnsemblRownames(seurat_objects[[4]])
+
+# generate a seurat object with bulk expression based on cell type, disease status, and donor
+bulk <- getBulkExpression(seu = seurat_objects[[4]],
+                          cellType = "cell_type",
+                          donor = "orig.ident",
+                          disease = "disease",
+                          diseaseLevels = c("chronic obstructive pulmonary disease",
+                                            "lung adenocarcinoma",
+                                            "non-small cell lung carcinoma",
+                                            "squamous cell lung carcinoma",
+                                            "normal"))
+
+Idents(bulk) <- "disease"
+bulk <- subset(bulk,
+               idents = c("normal"))
+
+VlnPlot_scCustom(bulk, features = c("CXCL1", "CXCL2", "CXCL6"),
+                 pt.size = 0.5,
+                 colors_use = c("Red", "Gray"),
+                 group.by = "celltype",
+                 split.by = "disease")
+
+# # cell types on x axis: fig.width=6.5, fig.height=4.5
+# VlnPlot_scCustom(bulk, features = c("IL23A"),
+#                  pt.size = 0.5,
+#                  colors_use = c("Grey", "Red"),
+#                  group.by = "celltype",
+#                  split.by = "disease",
+#                  y.max = 5) +
+#   stat_compare_means(method = "anova",
+#                      label = "p.signif") +
+#   theme(axis.title.x = element_blank(),
+#         axis.text.x = element_text(angle = 45))
+# cell types on y axis: fig.width=6.5, fig.height=4.5
+# lungSik <- VlnPlot_scCustom(bulk, features = c("IL23A"),
+#                  pt.size = 0.5,
+#                  colors_use = c("Red", "Pink", "Maroon", "Salmon", "Gray"),
+#                  group.by = "celltype",
+#                  split.by = "disease") +
+# stat_compare_means(method = "anova",
+#                      label = "p.signif",
+#                      label.y = 11) +
+#   theme(axis.title.y = element_blank(),
+#         axis.title.x = element_blank(),
+#         axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=0.5)) +
+#   scale_y_continuous(breaks=seq(0,12,3),
+#                      limits=c(0, 12)) +
+#   coord_flip()
+# 
+# # cell types on y axis: fig.width=5.5, fig.height=7
+# cairo_pdf(filename="/home/williamsdrw/epithelial-IL23/08_final_plots_for_figures/IL23A-Sikkema2023-lungCancer.pdf",
+#           width=7,
+#           height=3)
+# lungSik  
+# dev.off()
+```
+
+### Kong 2023 - Terminal Ileum
+```{r k2, fig.width=4.5, fig.height=3}
+seurat_objects[[6]]$ref <- "Kong 2023"
+seurat_objects[[6]]$source <- "czi_cellxgene"
+meta <- seurat_objects[[6]]$biosample_id
+meta <- gsub("_", "-", as.character(meta))
+seurat_objects[[6]]$orig.ident <- meta
+# This dataset was downloaded as epithelial only
+# seurat_objects[[6]] <- downsampleSeurat(seurat_objects[[6]], indx)
+seurat_objects[[6]] <- convertEnsemblRownames(seurat_objects[[6]])
+
+# generate a seurat object with bulk expression based on cell type, disease status, and donor
+bulk <- getBulkExpression(seu = seurat_objects[[6]],
+                          cellType = "cell_type",
+                          donor = "orig.ident",
+                          disease = "disease",
+                          diseaseLevels = c("Crohn disease", "normal"))
+Idents(bulk) <- "celltype"
+bulk <- subset(bulk,
+               idents = c("type L enteroendocrine cell",
+                          "type EC enteroendocrine cell"),
+               invert = T)
+
+Idents(bulk) <- "disease"
+bulk <- subset(bulk,
+               idents = c("normal"))
+
+VlnPlot_scCustom(bulk, features = c("CXCL1", "CXCL2", "CXCL6"),
+                 pt.size = 0.5,
+                 colors_use = c("Red", "Gray"),
+                 group.by = "celltype",
+                 split.by = "disease")
+
+# # cell types on x axis: fig.width=6.5, fig.height=4.5
+# VlnPlot_scCustom(bulk, features = c("IL23A"),
+#                  pt.size = 0.5,
+#                  colors_use = c("Grey", "Red"),
+#                  group.by = "celltype",
+#                  split.by = "disease",
+#                  y.max = 3) +
+#   stat_compare_means(method = "t.test",
+#                      label = "p.signif") +
+#   theme(axis.title.x = element_blank(),
+#         axis.text.x = element_text(angle = 45))
+# cell types on y axis: fig.width=6.5, fig.height=4.5
+# ileum <- VlnPlot_scCustom(bulk, features = c("IL23A"),
+#                  pt.size = 0.5,
+#                  colors_use = c("Red", "Gray"),
+#                  group.by = "celltype",
+#                  split.by = "disease",
+#                  y.max = 4.5) +
+#   stat_compare_means(method = "t.test",
+#                      label = "p.signif",
+#                      label.y = 4.25) +
+#   theme(axis.title.y = element_blank(),
+#         axis.title.x = element_blank(),
+#         axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=0.5)) +
+#   coord_flip()
+# 
+# # cell types on y axis: fig.width=5.5, fig.height=7
+# cairo_pdf(filename="/home/williamsdrw/epithelial-IL23/08_final_plots_for_figures/IL23A-Kong2023-ileum.pdf",
+#           width=4.5,
+#           height=3)
+# ileum  
+# dev.off()
+```
+
+### Tabula Sapiens dataset
+```{r tabula sapiens, fig.width=14, fig.height=10}
+seurat_objects[[5]]$ref <- "Tabula Sapiens 2022"
+seurat_objects[[5]]$source <- "czi_cellxgene"
+meta <- seurat_objects[[5]]$donor_id
+meta <- gsub("_", "-", as.character(meta))
+seurat_objects[[5]]$orig.ident <- meta
+meta <- seurat_objects[[5]]$tissue_in_publication
+meta <- gsub("_", " ", as.character(meta))
+seurat_objects[[5]]$tissue_in_publication <- meta
+
+# This dataset was downloaded as epithelial only
+# seurat_objects[[5]] <- downsampleSeurat(seurat_objects[[5]], indx)
+seurat_objects[[5]] <- convertEnsemblRownames(seurat_objects[[5]])
+
+# generate a seurat object with bulk expression based on cell type, disease status, and donor
+bulk <- getBulkExpression(seu = seurat_objects[[5]],
+                          cellType = "cell_type",
+                          donor = "orig.ident",
+                          disease = "tissue_in_publication", # TS dataset only has normal
+                          diseaseLevels = rev(c("Eye",
+                                            "Salivary Gland",
+                                            "Tongue",
+                                            "Trachea",
+                                            "Thymus",
+                                            "Mammary",
+                                            "Heart",
+                                            "Lung",
+                                            "Large Intestine",
+                                            "Small Intestine",
+                                            "Liver",
+                                            "Pancreas",
+                                            "Kidney",
+                                            "Bladder",
+                                            "Uterus",
+                                            "Prostate",
+                                            "Vasculature",
+                                            "Skin"))) # use the tissue type instead of disease for this dataset
+bulk$tissueType <- paste0(bulk$disease, "_", bulk$celltype)
+seurat_objects[[5]]$tissueType <- paste0(seurat_objects[[5]]$tissue_in_publication, "_", seurat_objects[[5]]$cell_type)
+
+# set.seed(1105)
+# pal <- sample(c(paletteer_d(`"dutchmasters::milkmaid"`),
+#                 paletteer_d(`"nord::afternoon_prarie"`),
+#                 paletteer_d(`"ggsci::default_aaas"`),
+#                 paletteer_d(`"ggsci::default_jama"`)))
+# tsVln <- VlnPlot_scCustom(bulk, 
+#                    features = c("IL23A"),
+#                    pt.size = 0.5,
+#                    group.by = "tissueType") +
+#     theme(axis.title.y = element_blank(),
+#           legend.position = 'none') +
+#     coord_flip()
+# 
+# tsVln2 <- VlnPlot_scCustom(seurat_objects[[5]], 
+#                    features = c("IL23A"),
+#                    pt.size = 0.5,
+#                    group.by = "tissueType") +
+#     theme(axis.title.y = element_blank(),
+#           legend.position = 'none') +
+#     coord_flip()
+# 
+# tsDot <- DotPlot_scCustom(bulk, 
+#                    features = c("IL23A"),
+#                    group.by = "tissueType",
+#                    colors_use = c("grey", "black")) +
+#     theme(axis.title.y = element_blank())
+# tsDot2 <- DotPlot_scCustom(seurat_objects[[5]], 
+#                    features = c("IL23A"),
+#                    group.by = "tissueType",
+#                    colors_use = c("grey", "black")) +
+#     theme(axis.title.y = element_blank())
+# 
+# tsDot|tsDot2
+# tsVln|tsVln2
+# 
+# # cell types on y axis: fig.width=6.5, fig.height=4.5
+# cairo_pdf(filename="test.pdf",
+#           width=3.5,
+#           height=6)
+# tsVln  
+# dev.off()
+```
+
+```{r, fig.width=20, fig.height=7}
+Idents(seurat_objects[[5]]) <- "tissueType"
+ts_sub <- subset(seurat_objects[[5]],
+                 idents = c("Bladder_bladder urothelial cell",
+                            "Eye_conjunctival epithelial cell",
+                            "Eye_corneal epithelial cell",
+                            "Eye_eye photoreceptor cell",
+                            "Eye_keratocyte",
+                            "Kidney_kidney epithelial cell",
+                            "Large Intestine_enterocyte",
+                            "Large Intestine_enterocyte of epithelium of large intestine",
+                            "Large Intestine_goblet cell",
+                            "Liver_hepatocyte",
+                            "Lung_basal cell",
+                            "Lung_club cell",
+                            "Lung_respiratory goblet cell",
+                            "Lung_type II pneumocyte",
+                            "Pancreas_pancreatic acinar cell",
+                            "Pancreas_pancreatic ductal cell",
+                            "Prostate_basal cell of prostate epithelium",
+                            "Prostate_club cell",
+                            "Prostate_epithelial cell",
+                            "Prostate_luminal cell of prostate epithelium",
+                            "Salivary Gland_acinar cell of salivary gland",
+                            "Salivary Gland_basal cell",
+                            "Salivary Gland_duct epithelial cell",
+                            "Salivary Gland_salivary gland cell",
+                            "Skin_epithelial cell",
+                            "Small Intestine_enterocyte of epithelium of small intestine",
+                            "Tongue_basal cell",
+                            "Tongue_epithelial cell",
+                            "Tongue_keratinocyte",
+                            "Trachea_basal cell",
+                            "Trachea_ciliated cell",
+                            "Trachea_secretory cell",
+                            "Trachea_tracheal goblet cell",
+                            "Uterus_ciliated epithelial cell",
+                            "Uterus_epithelial cell",
+                            "Uterus_epithelial cell of uterus"))
+
+tsVln3 <- VlnPlot_scCustom(ts_sub, 
+                   features = c("IL23A"),
+                   pt.size = 0.5,
+                   group.by = "tissueType") +
+    theme(axis.title.y = element_blank(),
+          legend.position = 'none') +
+    coord_flip()
+bulk2 <- getBulkExpression(seu = ts_sub,
+                          cellType = "cell_type",
+                          donor = "orig.ident",
+                          disease = "tissue_in_publication", # TS dataset only has normal
+                          diseaseLevels = rev(c("Eye",
+                                            "Salivary Gland",
+                                            "Tongue",
+                                            "Trachea",
+                                            "Thymus",
+                                            "Mammary",
+                                            "Heart",
+                                            "Lung",
+                                            "Large Intestine",
+                                            "Small Intestine",
+                                            "Liver",
+                                            "Pancreas",
+                                            "Kidney",
+                                            "Bladder",
+                                            "Uterus",
+                                            "Prostate",
+                                            "Vasculature",
+                                            "Skin"))) # use the tissue type instead of disease for this dataset
+bulk2$tissueType <- paste0(bulk2$disease, "_", bulk2$celltype)
+
+VlnPlot_scCustom(bulk2, 
+                   features = c("CXCL1", "CXCL2", "CXCL6"),
+                   pt.size = 0.5,
+                   group.by = "tissueType",
+                   add.noise = F) &
+    theme(axis.title.y = element_blank(),
+          legend.position = 'none') &
+    coord_flip()
+
+# tsDot3 <- DotPlot_scCustom(bulk2, 
+#                    features = c("IL23A"),
+#                    group.by = "tissueType",
+#                    colors_use = c("grey", "black")) +
+#     theme(axis.title.y = element_blank())
+# tsDot4 <- DotPlot_scCustom(ts_sub, 
+#                    features = c("IL23A"),
+#                    group.by = "tissueType",
+#                    colors_use = c("grey", "black")) +
+#     theme(axis.title.y = element_blank())
+
+tsVln4
+# tsDot4|tsDot3
+
+# cell types on y axis: fig.width=5.5, fig.height=7
+cairo_pdf(filename="/home/williamsdrw/epithelial-IL23/08_final_plots_for_figures/IL23A-tabSapSubset-tsVln4.pdf",
+          width=5.5,
+          height=7)
+tsVln4  
+dev.off()
+```
+
+# Import non-CZI skin dataset
+```{r}
+r <- Read10X("/home/williamsdrw/epithelial-IL23/02_raw_data/reynolds21")
+r <- CreateSeuratObject(r, project = "Reynolds2021")
+```
+
+## Format seurat object (metadata tidying, subset epi)
+```{r add meta}
+# add meta
+meta <- fread("/home/williamsdrw/epithelial-IL23/02_raw_data/reynolds21/metadata.csv")
+rownames(meta) <- meta$index
+r <- AddMetaData(r, meta)
+r$index <- NULL
+meta <- r$final_clustering
+meta <- gsub("_", "-", as.character(meta))
+r$final_clustering <- meta
+
+# subset epi
+Idents(r) <- "final_clustering"
+idents <- unique(r$final_clustering)[c(1,3,5)]
+r <- subset(r, idents = idents)
+
+Idents(r) <- "Status"
+r <- RenameIdents(r,
+                  "Healthy"="normal")
+
+# re-order disease status
+levels(r) <- c(
+  "normal",
+  "Eczema",
+  "Psoriasis"
+)
+r$Status <- r@active.ident
+```
+
+## Standard workflow
+```{r norm/scale}
+r <- NormalizeData(r) 
+r <- FindVariableFeatures(r)
+r <- ScaleData(r)
+r <- RunPCA(r)
+```
+## Visualize
+```{r visualize, fig.width=4.5, fig.height=3}
+# generate a seurat object with bulk expression based on cell type, disease status, and donor
+bulk <- getBulkExpression(seu = r,
+                          cellType = "final_clustering",
+                          donor = "donor_id",
+                          disease = "Status",
+                          diseaseLevels = c("Psoriasis", "Eczema", "normal"))
+
+# cell types on x axis: fig.width=6.5, fig.height=4.5
+skin <- VlnPlot_scCustom(bulk, features = c("IL23A"),
+                 pt.size = 0.5,
+                 colors_use = c("Red", "Maroon", "Gray"),
+                 group.by = "celltype", 
+                 split.by = "disease",
+                 y.max = 8) + 
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=0.5)) +
+    scale_y_continuous(breaks=seq(0,8,2),
+                     limits=c(0, 8)) +
+  coord_flip()
+
+skindf$split<- as.factor(skindf$split)
+
+skindf <- skin$data 
+stat <- skindf %>%
+  group_by(ident) %>%
+  t_test(IL23A ~ split, ref.group = "normal")
+
+# cell types on y axis: fig.width=5.5, fig.height=7
+cairo_pdf(filename="/home/williamsdrw/epithelial-IL23/08_final_plots_for_figures/IL23A-Reynolds2021-skin.pdf",
+          width=4.5,
+          height=3)
+skin  
+dev.off()
+```
+
+
+
+# Save processed objects
+```{r save}
+# # combine all seurat files
+# all <- merge(x=NIH, y=c(y, c, k1, s, t, k2))
+# save seurat obj with meta
+baseDir <- "~/epithelial-IL23/04_data_objects/03_Analysis_objects/"
+saveRDS(seurat_objects, file = paste0(baseDir, Sys.Date(), "_05_02-ExternalOnly_czi.RDS"))
+saveRDS(r, file = paste0(baseDir, Sys.Date(), "_05_02-ExternalOnly_skin.RDS"))
+```
+
+```{r session info}
+sessionInfo()
+```

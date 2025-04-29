@@ -1,0 +1,755 @@
+---
+title: "Integrate Xenium Project"
+author: "Drake Williams"
+date: "`r BiocStyle::doc_date()`"
+output: html_document
+knit: (function(inputFile, encoding) { 
+    rmarkdown::render(
+        inputFile, encoding = encoding, 
+        output_file = file.path(
+            dirname(inputFile), paste0('04_Annotation_',Sys.Date(),'.html'))) 
+                })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = F,
+                      message = F, 
+                      out.width = "100%", 
+                      fig.align='center')
+options(width = 1200)
+```
+```{css, echo=FALSE}
+pre, code {white-space:pre !important; overflow-x:auto}
+```
+# Introduction
+
+The objective of this notebook is to cluster the integrated xenium datasets, visualize the results and export lists for use in cluster annotation 
+
+## Load packages
+
+```{r load packages}
+library(pacman)
+p_load(Seurat, scCustomize, SeuratObject, stringr, SeuratWrappers, dplyr, data.table, clustree, Scillus, ggpubr, patchwork, Cairo, magrittr, ggplot2, RColorBrewer, purrr, paletteer,SingleR, SingleCellExperiment,scater,BiocParallel)
+source("/home/williamsdrw/xenium-hu-hvp/01_scripts/xenHelpers.R")
+options(Seurat.object.assay.version = "v5")
+options(future.globals.maxSize = 1e12)
+```
+
+## Set directory
+```{r load data}
+baseDir <- "/home/williamsdrw/xenium-hu-hvp/04_data_objects/"
+
+# find the most recent file to load
+list <- file.info(list.files(paste0(baseDir,"03_Clustering") ,full.names = T))
+print(paste0("Loading the most recent file: ", rownames(list)[which.max(list$mtime)]))
+combined <- readRDS(rownames(list)[which.max(list$mtime)])
+```
+```{r add patient metadata}
+xenMeta <- fread("/home/williamsdrw/xenium-hu-hvp/03_meta_data/xenMeta_ptInfo.csv")
+xenMeta$V10 <- NULL
+xenMeta <- xenMeta[!grepl("LAD", xenMeta$status),]
+combined <- Add_Sample_Meta(combined, xenMeta, join_by_seurat = "orig.ident", join_by_meta = "orig.ident", overwrite = T)
+```
+
+
+```{r annotate}
+initialAnnot <- read.csv('/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/snn_res_1_initial_annotation.csv', header=F)
+
+Idents(combined) <- "rpca_clusters_1"
+combined <- Rename_Clusters(combined, new_idents = initialAnnot$V2)
+levels(combined) <- unique(initialAnnot$V2)
+combined$init <- combined@active.ident
+
+table(combined$init)
+
+combined <- FindClusters(combined, 
+                         resolution = 2.5,
+                         cluster.name = "rpca_clusters_25"
+                         )
+
+all <- FindAllMarkers(combined) %>%
+           group_by(cluster) %>%
+           arrange(cluster, desc(pct.1))
+
+fwrite(all, file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/", Sys.Date(), "_rpca_allMarkers_r25.csv"))
+
+# save a pdf of location of each cluster in one FOV (for location verification of certain cell types e.g. epi)
+  Cluster_Highlight_Image_DimPlot(combined,
+                                  fov = names(combined@images)[c(3)],
+                                  split_by = "orig.ident",
+                                  cluster_level = "rpca_clusters_25",
+                                  isPdf = T,
+                                  size = 0.05,
+                                  w = 24,
+                                  h = 20)
+
+```
+
+
+```{r extract initial clusters and re-cluster}
+# create a vector containing region ID aka 'fov'
+region <- names(combined@images)
+
+# subcluster based on initial cell types (init)
+# split seurat obj into a list of objects and perform the same functions on each element in the list
+# Note: splitobject will fail if any of the 'init' clusters are 0 in an FOV
+# so you have to have relatively course annotations for this
+seuList <- SplitObject(combined, split.by = "init")
+seuList <- lapply(X = seuList, FUN = function(x) {
+    x <- FindNeighbors(x, 
+                       reduction = "integrated.rpca", 
+                       dims = 1:30)
+# do multiple clustering to generate a tree
+    x <- FindClusters(x, 
+                      resolution = 0.1,
+                      cluster.name = "sub.1")
+    x <- FindClusters(x, 
+                      resolution = 0.25,
+                      cluster.name = "sub.2")
+    x <- FindClusters(x, 
+                      resolution = 0.4,
+                      cluster.name = "sub.4")
+})
+
+for(i in 1:length(seuList)){
+# show the major cell type
+  print(as.character(unique(seuList[[i]]$init)))
+# show the tree
+  print(clustree(seuList[[i]], prefix = "sub"))
+  Idents(seuList[[i]]) <- "sub.4"
+# numerical order instead of 0, 1, 10, 11, etc
+  ord <- order(levels(seuList[[i]]$sub.4)) - 1
+  seuList[[i]]$sub.4 <- factor(seuList[[i]]$sub.4, levels = ord)
+  Idents(seuList[[i]]) <- "sub.4"
+# confirm numerical order
+  print(Idents(seuList[[i]]))
+# save all markers for annotation
+  fwrite(FindAllMarkers(seuList[[i]],
+                        only.pos = T,
+                        logfc.threshold = 0.8) %>%
+           group_by(cluster) %>%
+           arrange(cluster, desc(pct.1)),
+         file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/",
+                       Sys.Date(),
+                       "_",
+                       as.character(unique(seuList[[i]]$init)),
+                       "_allMarkers.csv"))
+# save a pdf of location of each cluster in one FOV (for location verification of certain cell types e.g. epi)
+  Cluster_Highlight_Image_DimPlot(seuList[[i]],
+                                  fov = region[c(3)],
+                                  split_by = "orig.ident",
+                                  cluster_level = "sub.4",
+                                  sample = as.character(unique(seuList[[i]]$init)),
+                                  isPdf = T,
+                                  size = 0.05,
+                                  w = 24,
+                                  h = 20)
+}
+
+```
+```{r}
+# save a pdf of location of each cluster in all FOV (for location verification of certain cell types e.g. epi)
+for(i in 1:length(seuList)){
+  print(Cluster_Highlight_Image_DimPlot(seuList[[i]],
+                                  fov = region,
+                                  split_by = "orig.ident",
+                                  cluster_level = "Xenium_snn_res.0.1",
+                                  sample = paste0("cluster",i),
+                                  isPdf = T,
+                                  size = 0.05,
+                                  w = 22,
+                                  h = 16))
+}
+
+```
+
+```{r save before modifying}
+# save the combined xenium object prior to any modification
+saveRDS(combined, file = paste0(baseDir, "04_Annotation/", Sys.Date(), "_04-preannot.RDS"))
+
+```
+
+```{r annotate and extract unclear}
+
+# confirm the clusters are in the correct order (0,1,2,3,4,5, etc)
+# the non-seurat method of renaming idents requires the vector of idents to be in the same order as the ident levels
+print(as.character(levels(combined$rpca_clusters_25)))
+# modify order of particular seurat object idents in the list if necessary
+# e.g.
+Idents(combined) <- "rpca_clusters_25"
+ord <- order(levels(combined$rpca_clusters_25)) - 1
+combined$rpca_clusters_25 <- factor(combined$rpca_clusters_25, levels = ord)
+
+# confirm the clusters are in the correct order (0,1,2,3,4,5, etc)
+# the non-seurat method of renaming idents requires the vector of idents to be in the same order as the ident levels
+print(as.character(levels(combined$rpca_clusters_25)))
+
+```
+
+
+```{r}
+initAnnot <- read.csv('/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/rpca_clusters_25_initialAnnot.csv', header = T)
+
+# apply new annotations to combined
+Idents(combined) <- "rpca_clusters_25"
+combined <- Rename_Clusters(combined, new_idents = initAnnot$init)
+combined$init <- combined@active.ident
+# apply new annotations to combined
+Idents(combined) <- "rpca_clusters_25"
+combined <- Rename_Clusters(combined, new_idents = initAnnot$init2)
+combined$init2 <- combined@active.ident
+
+```
+
+```{r}
+clst <- as.character(unique(combined$init))
+clst <- clst[grepl("reclu", clst)]
+Idents(combined) <- "init"
+reclust <- subset(combined, idents = clst)
+rest <- subset(combined, idents = clst, invert=T)
+
+reclust <- FindClusters(reclust, 
+                      resolution = 1,
+                      cluster.name = "sub.1")
+
+all <- FindAllMarkers(reclust) %>%
+           group_by(cluster) %>%
+           arrange(cluster, desc(pct.1))
+
+fwrite(all, file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/", Sys.Date(), "_recluster_allMarkers_r1.csv"))
+
+# save a pdf of location of each cluster in one FOV (for location verification of certain cell types e.g. epi)
+  Cluster_Highlight_Image_DimPlot(reclust,
+                                  fov = names(reclust@images)[c(3,11)],
+                                  split_by = "orig.ident",
+                                  cluster_level = "sub.1",
+                                  isPdf = T,
+                                  size = 0.05,
+                                  w = 24,
+                                  h = 20)
+
+recluAnnot <- read.csv('/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/reclust.csv', header = T)
+
+# apply new annotations to reclust
+Idents(reclust) <- "sub.1"
+reclust <- Rename_Clusters(reclust, new_idents = recluAnnot$init)
+reclust$init <- reclust@active.ident
+# apply new annotations to reclust
+Idents(reclust) <- "sub.1"
+reclust <- Rename_Clusters(reclust, new_idents = recluAnnot$init2)
+reclust$init2 <- reclust@active.ident
+
+rcm <- reclust@meta.data
+rem <- rest@meta.data  
+```
+
+
+```{r apply annotations, fig.width=11, fig.height=4}
+# combine metadata 
+merged_table <- bind_rows(rem, rcm)
+meta <- merged_table[c("init", "init2")]
+
+
+# add init and init2 metadata to original seurat object
+combined <- AddMetaData(combined, meta)
+
+Idents(combined) <- "init2"
+# reorder levels
+levels(combined) <- c("Endothelial", 
+                            "Fibroblast", 
+                            "Immune", 
+                            "Epithelial", 
+                            "SMC",
+                            "Unclear")
+combined$L2 <- combined@active.ident
+
+
+# print a general image of L2 idents on 2 FOVs
+print(ImageDimPlot(combined,
+             fov=names(combined@images)[c(8,10)],
+             group.by = "init",
+             split.by = "status",
+             cols = "polychrome",
+             size = 1,
+             crop=T) + plot_layout(guides = 'collect'))
+
+
+```
+
+```{r, fig.height=10, fig.width=17}
+reclust <- NULL
+rest <- NULL
+gc()
+
+seuList <- SplitObject(combined, split.by = "init")
+plots <- list()
+Idents(combined) <- "init2"
+all_markers_L4 <- FindAllMarkers(object = combined, 
+                                verbose = T,
+                                logfc.threshold = 1.2,
+                                only.pos = T)
+fwrite(all_markers_L4,
+         file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/",
+                       Sys.Date(),
+                       "_init2_allMarkers.csv"))
+for(i in 1:length(seuList)){
+  print(as.character(unique(seuList[[i]]$init)))
+  Idents(seuList[[i]]) <- "init2"
+  all_markers <-  all_markers_L4[all_markers_L4$cluster %in% levels(seuList[[i]]),]
+  if(length(row.names(all_markers)) > 0){
+    top <- Extract_Top_Markers(marker_dataframe = all_markers, num_genes = 6, rank_by = "pct.1", data_frame = F)
+    # top2 <- Extract_Top_Markers(marker_dataframe = all_markers, num_genes = 3, rank_by = "avg_log2FC", data_frame = T)
+    # top3 <- bind_rows(top, top2) %>%
+    #   group_by(cluster)
+    plots[[i]] <- DotPlot_scCustom(seuList[[i]],
+                   features = rev(unique(c(top))),
+                   col.min = 0,
+                   x_lab_rotate = F,
+                   colors_use = c("white", "black"))+
+          coord_flip() +
+    theme(panel.grid.major.y=element_line(size=0.1,colour="black"),
+          panel.grid.major.x=element_line(size=0.1,colour="black")) +
+      ggtitle(as.character(unique(seuList[[i]]$init)))
+
+
+  }
+}
+
+  Cluster_Highlight_Image_DimPlot(combined,
+                                  fov = names(combined@images)[c(3,11,8,10)],
+                                  split_by = "orig.ident",
+                                  cluster_level = "init2",
+                                  isPdf = T,
+                                  size = 0.05,
+                                  w = 24,
+                                  h = 20)
+
+
+# p_load(gridExtra)
+wrap_plots(plots[c(11,12,5,10,2,1,4,6,9,7)], ncol = 4)
+wrap_plots(plots[c(8)], ncol = 1)
+```
+
+```{r}
+newAnnot <- read.csv('/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/cellAnnotations_from-init2.csv', header = T)
+
+combined <- Add_Sample_Meta(seurat_object = combined, meta_data = newAnnot, join_by_seurat = "init2",
+    join_by_meta = "init2")
+
+clst <- as.character(unique(combined$L4))
+clst <- clst[grepl("mix", clst)]
+uncl <- as.character(unique(combined$L4))
+uncl <- uncl[grepl("unclear", uncl)]
+Idents(combined) <- "L4"
+reclust <- subset(combined, idents = clst)
+rest <- subset(combined, idents = clst, invert=T)
+
+reclust <- FindClusters(reclust, 
+                      resolution = 0.5,
+                      cluster.name = "sub.05")
+
+all <- FindAllMarkers(reclust) %>%
+           group_by(cluster) %>%
+           arrange(cluster, desc(pct.1))
+
+fwrite(all, file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/", Sys.Date(), "_recluster-2nd_allMarkers_r05.csv"))
+
+# save a pdf of location of each cluster in one FOV (for location verification of certain cell types e.g. epi)
+  Cluster_Highlight_Image_DimPlot(reclust,
+                                  fov = names(reclust@images)[c(3,11)],
+                                  split_by = "orig.ident",
+                                  cluster_level = "sub.05",
+                                  isPdf = T,
+                                  size = 0.05,
+                                  w = 24,
+                                  h = 20)
+
+recluAnnot <- read.csv('/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/reannot-2nd.csv', header = T)
+recluAnnot$sub.05 <- factor(recluAnnot$sub.05)
+reclust <- Add_Sample_Meta(seurat_object = reclust, meta_data = recluAnnot, join_by_seurat = "sub.05",
+    join_by_meta = "sub.05", overwrite = T)
+
+rcm <- reclust@meta.data
+rem <- rest@meta.data  
+merged_table <- bind_rows(rem, rcm)
+meta <- merged_table[c("L2", "L3", "L4")]
+
+
+# add L2,L3,L4 metadata to original seurat object
+combined <- AddMetaData(combined, meta)
+
+  
+```
+
+
+```{r}
+# do one more recluster to extract some epi from 'unclear'
+Idents(combined) <- "L4"
+uncl <- as.character(unique(combined$L4))
+uncl <- uncl[grepl("unclear", uncl)]
+reclust <- subset(combined, idents = uncl)
+rest <- subset(combined, idents = uncl, invert=T)
+
+reclust <- FindClusters(reclust, 
+                      resolution = 0.5,
+                      cluster.name = "sub.05")
+
+all <- FindAllMarkers(reclust) %>%
+           group_by(cluster) %>%
+           arrange(cluster, desc(pct.1))
+
+fwrite(all, file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/", Sys.Date(), "_recluster-3rd_allMarkers_r05.csv"))
+
+# save a pdf of location of each cluster in one FOV (for location verification of certain cell types e.g. epi)
+  Cluster_Highlight_Image_DimPlot(reclust,
+                                  fov = names(reclust@images)[c(3,11)],
+                                  split_by = "orig.ident",
+                                  cluster_level = "sub.05",
+                                  isPdf = T,
+                                  size = 0.05,
+                                  w = 24,
+                                  h = 20)
+
+recluAnnot <- read.csv('/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/reannot-3rd.csv', header = T)
+recluAnnot$sub.05 <- factor(recluAnnot$sub.05)
+reclust <- Add_Sample_Meta(seurat_object = reclust, meta_data = recluAnnot, join_by_seurat = "sub.05",
+    join_by_meta = "sub.05", overwrite = T)
+
+rcm <- reclust@meta.data
+rem <- rest@meta.data  
+merged_table <- bind_rows(rem, rcm)
+meta <- merged_table[c("L2", "L3", "L4")]
+
+
+# add L2,L3,L4 metadata to original seurat object
+combined <- AddMetaData(combined, meta)
+
+```
+
+
+
+```{r}
+# clean metadata - L2 should be stromal instead of fib/endo
+meta <- combined@meta.data
+unique(meta$L2)
+meta$L2 <- ifelse(meta$L2 %in% c("Fibroblast", "Endothelial"), "Stromal", meta$L2)
+L4 <- unique(meta$L4)
+# Identify rows containing "Ep", "Langerhans", or "IE"
+epi_indices <- grepl("Ep|Lang|IE", L4)
+
+# Subset L4 based on the indices
+epiR <- data.frame(L4[epi_indices])  # Select rows with TRUE in epi_indices
+colnames(epiR) <- "L4"
+conR <- data.frame(L4[!epi_indices])  # Select rows with FALSE in epi_indices
+colnames(conR) <- "L4"
+
+# Combine data frames and add region info
+regionMeta <- bind_rows(epiR, conR)
+regionMeta$region <- c(rep("Epi", 23), rep("CT", 107))
+
+# add region metadata to object
+combined <- Add_Sample_Meta(seurat_object = combined, meta_data = regionMeta, join_by_seurat = "L4",
+    join_by_meta = "L4", overwrite = T)
+
+# generate combined$orig_reg that contains orig.ident and region info separated by _
+meta <- combined@meta.data
+meta$orig_reg <- paste(meta$orig.ident, meta$region, sep = "_")
+combined <- AddMetaData(combined, meta)
+
+# get stored region area metadata and harmonize 'region' column to combined$orig_reg
+regionArea <- combined@misc$expanded_area_kmeans2
+regionArea['region'] <- ifelse(regionArea$top_gene == "KRT19", "Epi", "CT")
+# Create a new column named 'orig_reg'
+regionArea$orig_reg <- paste(regionArea$orig.ident, regionArea$region, sep = "_")
+addRegion <- regionArea[,c(7,2)]
+
+# add region metadata to object
+combined <- Add_Sample_Meta(seurat_object = combined, meta_data = addRegion, join_by_seurat = "orig_reg",
+    join_by_meta = "orig_reg", overwrite = T)
+
+```
+
+
+
+```{r clean up metadata}
+# get metadata from combined
+meta <- combined@meta.data
+# keep only 1 instance of each L4 label
+meta2 <- meta[!duplicated(meta$L4),]
+meta2 <- meta2[,c(27:29)]
+
+# Add a new column 'Lvl1' with conditional assignment
+meta2$Lvl1 <- sapply(meta2$L2, function(x) ifelse(x %in% c("B.Plasma", "T.NK", "MoMaD", "Mast"), 
+                                                  "Immune", 
+                                                  ifelse(x %in% c("Fibroblast", "Stromal", "Endothelial"), 
+                                                         "Stromal",
+                                                         ifelse(x == "Epithelial", 
+                                                                "Epithelial",
+                                                                ifelse(x %in% c("Neuronal", "Other"), 
+                                                                       "Other", 
+                                                                       "Unclear")))))
+meta2$Lvl1b <- sapply(meta2$L3, function(x) ifelse(x %in% c("B cell", "Plasma", "T.CD4", "T.CD8", "T.Cyto-NKT", "T.CD3", "T.Mix",
+                                                            "Dendritic cell", "Mast", "Langerhans", "Macrophage"), 
+                                                  "Immune", 
+                                                  ifelse(x %in% c("Fibroblast", "Myofibroblast"), 
+                                                         "Fibroblast",
+                                                         ifelse(x %in% c("Basal", "Parabasal", "Basal-Parabasal", "Parabasal-Surface", "Surface", "Crevicular"), 
+                                                                "Epithelial",
+                                                                ifelse(x %in% c("Neuronal"), 
+                                                                       "Neuronal",
+                                                                       ifelse(x %in% c("Endothelial", "Smooth Muscle", "Lymphatic"), 
+                                                                              "Endothelial",
+                                                                              ifelse(x == "Other",
+                                                                                     "Other",
+                                                                                     "Unclear")))))))
+
+meta2$Lvl2 <- sapply(meta2$L3, function(x) ifelse(x %in% c("B cell", "Plasma", "T.CD4", "T.CD8", "T.Cyto-NKT", "T.CD3", "T.Mix"), 
+                                                  "Lymphoid", 
+                                                  ifelse(x %in% c("Dendritic cell", "Mast", "Langerhans", "Macrophage"), 
+                                                         "Myeloid",
+                                                         ifelse(x %in% c("Fibroblast", "Myofibroblast"), 
+                                                                "Fibroblast",
+                                                                ifelse(x %in% c("Neuronal"), 
+                                                                       "Neuronal",
+                                                                       ifelse(x %in% c("Basal", "Parabasal", "Basal-Parabasal", "Parabasal-Surface", "Surface"), 
+                                                                              "Epithelial (oral)",
+                                                                              ifelse(x == "Crevicular",
+                                                                                     "Epithelial (crevicular)",
+                                                                                     ifelse(x %in% c("Endothelial", "Smooth Muscle", "Lymphatic"),
+                                                                                            "Endothelial",
+                                                                                            ifelse(x == "Other",
+                                                                                                   "Other",
+                                                                                                   "unclear")))))))))
+
+meta2$Lvl3 <- meta2$L3
+meta2$Lvl4 <- meta2$L4
+
+meta2$epiHL <- ifelse(meta2$Lvl1 == "Epithelial", meta2$Lvl3, meta2$Lvl1)
+meta2$fibHL <- ifelse(meta2$Lvl2 == "Fibroblast", meta2$Lvl3, meta2$Lvl1)
+meta2$endoHL <- ifelse(meta2$Lvl2 == "Endothelial", meta2$Lvl3, meta2$Lvl1)
+meta2$immuneHL <- ifelse(meta2$Lvl1 == "Immune", meta2$Lvl3, meta2$Lvl1)
+
+meta2 <- meta2 %>%
+  mutate(
+    Lvl1_IE = case_when(
+      Lvl4 == "Langerhans" ~ "Immune_IE",
+      Lvl4 == "Lang.MKI67hi" ~ "Immune_IE",
+      Lvl4 == "T.CD4.IE" ~ "Immune_IE",
+      TRUE ~ Lvl1  # Default: Keep original value for other cases
+    )
+  ) %>%
+  mutate(
+    Lvl1b_IE = case_when(
+      Lvl4 == "Langerhans" ~ "Immune_IE",
+      Lvl4 == "Lang.MKI67hi" ~ "Immune_IE",
+      Lvl4 == "T.CD4.IE" ~ "Immune_IE",
+      TRUE ~ Lvl1b  # Default: Keep original value for other cases
+    )
+  ) %>%
+  mutate(
+    Lvl2_IE = case_when(
+      Lvl4 == "Langerhans" ~ "Myeloid_IE",
+      Lvl4 == "Lang.MKI67hi" ~ "Myeloid_IE",
+      Lvl4 == "T.CD4.IE" ~ "Lymphoid_IE",
+      TRUE ~ Lvl2  # Default: Keep original value for other cases
+    )
+  ) %>%
+  mutate(
+    Lvl3_IE = case_when(
+      Lvl4 == "T.CD4.IE" ~ "T.CD4_IE",
+      TRUE ~ Lvl3  # Default: Keep original value for other cases
+    )
+  )
+meta2$L2 <- NULL
+meta2$L3 <- NULL
+meta2$L4 <- NULL
+
+
+fwrite(meta2, file="/home/williamsdrw/xenium-hu-hvp/03_meta_data/xenMeta_postAnnot.csv")
+
+```
+
+
+```{r clean up metadata}
+met <- fread(file="/home/williamsdrw/xenium-hu-hvp/03_meta_data/xenMeta_postAnnot.csv", header = T)
+combined <- Add_Sample_Meta(combined, met, join_by_seurat = "Lvl4", join_by_meta = "Lvl4_orig", overwrite = T)
+combined$Lvl4 <- combined$Lvl4.y
+
+# get metadata from combined
+meta <- combined@meta.data
+# keep only 1 instance of each L4 label
+meta2 <- meta[!duplicated(meta$Lvl4),]
+meta2 <- meta2[,c(33:41)]
+
+
+meta2 <- meta2 %>%
+  mutate(
+    Lvl1_IE = case_when(
+      Lvl4 == "Lang" ~ "Immune_IE",
+      Lvl4 == "Lang.MKI67hi" ~ "Immune_IE",
+      TRUE ~ Lvl1  # Default: Keep original value for other cases
+    )
+  ) %>%
+  mutate(
+    Lvl1b_IE = case_when(
+      Lvl4 == "Lang" ~ "Immune_IE",
+      Lvl4 == "Lang.MKI67hi" ~ "Immune_IE",
+      TRUE ~ Lvl1b  # Default: Keep original value for other cases
+    )
+  ) %>%
+  mutate(
+    Lvl2_IE = case_when(
+      Lvl4 == "Lang" ~ "Myeloid_IE",
+      Lvl4 == "Lang.MKI67hi" ~ "Myeloid_IE",
+      TRUE ~ Lvl2  # Default: Keep original value for other cases
+    )
+  )
+
+
+fwrite(meta2, file="/home/williamsdrw/xenium-hu-hvp/03_meta_data/xenMeta_postAnnot.csv")
+
+```
+
+```{r}
+meta2 <- fread(file="/home/williamsdrw/xenium-hu-hvp/03_meta_data/xenMeta_postAnnot.csv", header = T)
+# add FINAL metadata to combined
+combined <- Add_Sample_Meta(combined, meta2, join_by_seurat = "Lvl4", join_by_meta = "Lvl4", overwrite = T)
+#combined$Lvl4 <- combined$Lvl4.y
+combined$Lvl4.y <- NULL
+combined$Lvl1b_IE <- NULL
+combined$Lvl1b <- NULL
+
+# organize HV so that it's in the order of normal/perio
+combined$pt.id <- factor(x = combined$pt.id, 
+                        levels = sort(unique(combined$pt.id))[c(5,6,10,12,13,17,19,20,24,
+                                                                1:4,7:9,11,14:16,18,21:23)])
+
+# organize new annotation levels
+combined$Lvl1 <- factor(x = combined$Lvl1, 
+                        levels = sort(unique(combined$Lvl1))[c(6,2,3,1,4,5)])
+combined <- Store_Palette_Seurat(combined, 
+                                 palette = c("#990F0FFF", "#6B990FFF", "#0F6B99FF", "#99540FFF", #c(paletteer::paletteer_d("colorBlindness::SteppedSequential5Steps")[c(11,16,6)], 
+                                             "#E5E5E5",
+                                             "#FFFFFF"), 
+                                 palette_name = "Lvl1",
+                                 overwrite = T)
+
+combined$Lvl2 <- factor(x = combined$Lvl2, 
+                        levels = sort(unique(combined$Lvl2))[c(1,8,3,4,5,6,7,2,9)])
+combined <- Store_Palette_Seurat(combined,
+                                 palette = c(paletteer::paletteer_d("colorBlindness::SteppedSequential5Steps")[c(1,11,16,21,10,6)],
+                                             "#000000",
+                                             "#E5E5E5E5",
+                                             "#FFFFFFFF"),
+                                 palette_name = "Lvl2",
+                                 overwrite = T)
+# print(levels(combined$Lvl2))
+# print(combined@misc$Lvl2)
+
+combined$Lvl3 <- factor(x = combined$Lvl3, 
+                        levels = sort(unique(combined$Lvl3))[c(5,14,6,10,2,12,16,17,18,1,8,9,3,15,7,4,13,11,19)])
+
+print(levels(combined$Lvl3))
+
+seuList <- SplitObject(combined, split.by = "Lvl3")
+l4level <- c()
+for(i in 1:length(seuList)){
+  print(unique(seuList[[i]]$Lvl3))
+  l4level <- c(l4level, sort(unique(seuList[[i]]$Lvl4)))
+}
+l4level <- l4level[c(75:78,92:93,79,80:84,113,69:73,94,74,85:90,106,107,91,101,103:105,102,95:100,108,109,111,112,110,2:68,114,1)]
+combined$Lvl4 <- factor(x = combined$Lvl4,
+                        levels = l4level)
+
+combined$epiHL <- factor(x = combined$epiHL, 
+                        levels = sort(unique(combined$epiHL))[c(10,3,4,1,8,5,2,7,6,9)])
+combined <- Store_Palette_Seurat(combined, 
+                                 palette = c("#e0b7b7",
+                                             "#d2e0b7",
+                                             "#b7d2e0",
+                                             "#004488FF",
+                                             "#BB5566FF",
+                                             "#097969",
+                                             "#FD7901FF",
+                                             #paletteer::paletteer_d("khroma::highcontrast"),
+                                             #paletteer::paletteer_d("ltc::trio1")[1],
+                                             "cyan",
+                                             #paletteer::paletteer_d("ltc::trio1")[c(2)],
+                                             "#E5E5E5E5",
+                                             "#FFFFFFFF"), 
+                                 palette_name = "epiHL",
+                                 overwrite = T)
+
+combined$endoHL <- factor(x = combined$endoHL, 
+                        levels = sort(unique(combined$endoHL))[c(1,6,3,4,2,5,7)])
+combined <- Store_Palette_Seurat(combined, 
+                                 palette = c(paletteer::paletteer_d("khroma::highcontrast")[c(1:2)],
+                                             "#d2e0b7",
+                                             "#b7d2e0",
+                                             "#e0cbb7",
+                                             "#E5E5E5E5",
+                                             "#FFFFFFFF"), 
+                                 palette_name = "endoHL",
+                                 overwrite = T)
+
+combined$fibHL <- factor(x = combined$fibHL, 
+                        levels = sort(unique(combined$fibHL))[c(7,2,4,3,1,5,6)])
+combined <- Store_Palette_Seurat(combined, 
+                                 palette = c("#e0b7b7",
+                                             "#BB5566FF",
+                                             "#FFAC1C",
+                                             "#b7d2e0",
+                                             "#e0cbb7",
+                                             "#E5E5E5E5",
+                                             "#FFFFFFFF"), 
+                                 palette_name = "fibHL",
+                                 overwrite = T)
+
+combined$lymphoidHL <- factor(x = combined$lymphoidHL, 
+                        levels = sort(unique(combined$lymphoidHL))[c(11,3,1,6,7,8,9,4,2,5,10)])
+combined <- Store_Palette_Seurat(combined, 
+                                 palette = c("#e0b7b7",
+                                             "#d2e0b7",
+                                             '#0FFF50',
+                                             '#191970',
+                                             "cyan",
+                                             "#E97451",
+                                             "#BF40BF",
+                                             "#b7d2e0",
+                                             "#e0cbb7",
+                                             "#E5E5E5E5",
+                                             "#FFFFFFFF"), 
+                                 palette_name = "lymphoidHL",
+                                 overwrite = T)
+
+combined$myeloidHL <- factor(x = combined$myeloidHL, 
+                        levels = sort(unique(combined$myeloidHL))[c(9,3,5,1,4,6,2,7,8)])
+combined <- Store_Palette_Seurat(combined, 
+                                 palette = c("#e0b7b7",
+                                             "#d2e0b7",
+                                             "#b7d2e0",
+                                             "#008000",
+                                             "#1F51FF",
+                                             "#E4D00A",
+                                             "#e0cbb7",
+                                             "#E5E5E5E5",
+                                             "#FFFFFFFF"), 
+                                 palette_name = "myeloidHL",
+                                 overwrite = T)x
+
+combined@misc$immuneHL <- NULL
+combined$Lvl3_IE <- NULL
+```
+
+
+```{r}
+# save prelim annotation
+saveRDS(combined, file = paste0("/home/williamsdrw/xenium-hu-hvp/04_data_objects/04_Annotation/", Sys.Date(), "_04.RDS"))
+```
+
+## Session Info
+```{r session info}
+sessionInfo()
+```
+

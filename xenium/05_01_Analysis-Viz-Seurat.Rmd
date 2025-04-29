@@ -1,0 +1,2101 @@
+---
+title: "Integrate Xenium Project"
+author: "Drake Williams"
+date: "`r BiocStyle::doc_date()`"
+output: html_document
+knit: (function(inputFile, encoding) { 
+    rmarkdown::render(
+        inputFile, encoding = encoding, 
+        output_file = file.path(
+            dirname(inputFile), paste0('04_Annotation_',Sys.Date(),'.html'))) 
+                })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = F,
+                      message = F, 
+                      out.width = "100%", 
+                      fig.align='center')
+options(width = 1200)
+```
+```{css, echo=FALSE}
+pre, code {white-space:pre !important; overflow-x:auto}
+```
+# Introduction
+
+The objective of this notebook is to cluster the integrated xenium datasets, visualize the results and export lists for use in cluster annotation 
+
+## Load packages
+
+```{r load packages}
+library(pacman)
+# devtools::install_github("rpolicastro/scProportionTest")
+# BiocManager::install("speckle")
+p_load(Seurat,scCustomize,data.table,patchwork,ggplot2,magrittr,scProportionTest,speckle,tidyverse,RColorBrewer,ggpubr,rstatix, Cairo, paletteer, heatmaply)
+# p_load(Seurat, scCustomize, SeuratObject, stringr, SeuratWrappers, dplyr, data.table, clustree, Scillus, ggpubr, patchwork, Cairo, magrittr, ggplot2, RColorBrewer, purrr, paletteer,SingleR, SingleCellExperiment,scater,BiocParallel)
+
+source("/home/williamsdrw/xenium-hu-hvp/01_scripts/xenHelpers.R")
+options(Seurat.object.assay.version = "v5")
+options(future.globals.maxSize = 1e12)
+```
+
+## Set directory
+```{r load data}
+baseDir <- "/home/williamsdrw/xenium-hu-hvp/04_data_objects/"
+
+# find the most recent file to load
+list <- file.info(list.files(paste0(baseDir,"04_Annotation") ,full.names = T))
+print(paste0("Loading the most recent file: ", rownames(list)[which.max(list$mtime)]))
+combined <- readRDS(rownames(list)[which.max(list$mtime)])
+```
+```{r, eval=F}
+# generate metadata for cellcharter
+combined$cell_id <- rownames(combined@meta.data)
+# save metadata for cellcharter
+fwrite(combined@meta.data[,c(1,11,16:23,30:45)], file = '/home/williamsdrw/xenium-hu-hvp/py_metadata.csv')
+```
+
+### Offline: analyze for niches using CellCharter (python)
+
+```{r}
+# Add cellcharter metadata
+ccmeta <- fread('/home/williamsdrw/xenium-hu-hvp/03_meta_data/cc_metadata.csv')
+rownames(ccmeta) <- ccmeta$cell_id
+ccmeta <- ccmeta[,c(20:22)]
+names(ccmeta) <- c('cc24', 'cc10', 'cc16')
+combined <- AddMetaData(combined, ccmeta)
+```
+
+```{r}
+Idents(combined) <- "Lvl3"
+unique(Idents(combined))
+combined
+combined <- subset(combined, idents = c("Unclear"), invert=T)
+combined
+```
+
+
+```{r visualize after annotation, fig.height=17, fig.width=25}
+seuList <- SplitObject(combined, split.by = "Lvl2")
+plots <- list()
+Idents(combined) <- "Lvl4"
+all_markers_L4 <- FindAllMarkers(object = combined, 
+                                verbose = F,
+                                logfc.threshold = 0.3,
+                                only.pos = T)
+fwrite(all_markers_L4,
+         file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/",
+                       Sys.Date(),
+                       "_Lvl4_allMarkers.csv"))
+ord <- as.character()
+for(i in 1:length(seuList)){
+  print(as.character(unique(seuList[[i]]$Lvl2)))
+  Idents(seuList[[i]]) <- "Lvl4"
+  all_markers <-  all_markers_L4[all_markers_L4$xcluster %in% levels(seuList[[i]]),]
+  if(length(row.names(all_markers)) > 0){
+    top <- Extract_Top_Markers(marker_dataframe = all_markers, num_genes = 5, rank_by = "pct.1", data_frame = T)
+    top2 <- Extract_Top_Markers(marker_dataframe = all_markers, num_genes = 5, rank_by = "avg_log2FC", data_frame = T)
+    top3 <- bind_rows(top, top2) %>%
+      group_by(cluster)
+    plots[[i]] <- DotPlot_scCustom(seuList[[i]],
+                   features = rev(unique(c(top3$gene))),
+                   col.min = 0,
+                   x_lab_rotate = T,
+                   colors_use = c("white", "black"))+
+          coord_flip() +
+    theme(panel.grid.major.y=element_line(size=0.1,colour="black"),
+          panel.grid.major.x=element_line(size=0.1,colour="black")) +
+      ggtitle(as.character(unique(seuList[[i]]$Lvl2)))
+
+
+  }
+  ord <- c(ord, sort(unique(levels(seuList[[i]]))))
+}
+combined$Lvl4 <- factor(x = combined$Lvl4, 
+                        levels = rev(ord))
+
+Cluster_Highlight_Image_DimPlot(combined,
+                                  fov = names(combined@images)[c(8,10,3,11)],
+                                  split_by = "orig.ident",
+                                  cluster_level = "Lvl4",
+                                  # sample = as.character(unique(seuList[[i]]$Lvl2)),
+                                  isPdf = T,
+                                  size = 0.3,
+                                  col = 1,
+                                  w = 24,
+                                  h = 10)
+
+# p_load(gridExtra)
+wrap_plots(plots, ncol = 4)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_dotplot_all_Lvl4.pdf"), dpi = 600, height=16, width=25)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_dotplot_all_Lvl4.png"), dpi = 600, height=16, width=25)
+```
+
+```{r, fig.height=9, fig.width=7}
+
+Idents(combined) <- "Lvl3"
+all_mkrs_L2 <- FindAllMarkers(combined, 
+                           only.pos = T,
+                           logfc.threshold = 0.8) 
+all_mkrs_L2 <- scCustomize::Extract_Top_Markers(all_mkrs_L2, num_genes=3, group_by = "cluster", rank_by = "pct.1", data_frame = T)
+all_mkrs_L22 <- scCustomize::Extract_Top_Markers(all_mkrs_L2, num_genes=3, group_by = "cluster", rank_by = "avg_log2FC", data_frame = T)
+
+DotPlot_scCustom(combined, 
+                 features = rev(unique(c(all_mkrs_L2$gene, all_mkrs_L22$gene))), 
+                 group.by = "Lvl3", 
+                 x_lab_rotate = T, 
+                 col.min = 0,
+                 colors_use = c("white", "black")) + 
+  coord_flip() +
+  theme(panel.grid.major.y=element_line(size=0.1,colour="black"),
+        panel.grid.major.x=element_line(size=0.1,colour="black"))
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_dotplot_all_Lvl3.pdf"), dpi = 600, height=9, width=7)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_dotplot_all_Lvl3.png"), dpi = 600, height=9, width=7)
+```
+
+```{r}
+
+combined$Lvl1IE_orig <- paste0(combined$Lvl1_IE,"_",combined$orig.ident)
+unique_combinations <- data.frame(unique(cbind(combined$total_area_mm2, combined$Lvl1IE_orig, combined$region)))
+unique_combinations$X1 <- as.numeric(unique_combinations$X1)
+  
+# fwrite(unique_combinations, '/home/williamsdrw/xenium-hu-hvp/03_meta_data/xenMeta_fixAreas.csv')
+# offline adjust fixAreas
+newMeta <- fread('/home/williamsdrw/xenium-hu-hvp/03_meta_data/xenMeta_fixAreas.csv')
+newMeta$X3 <- NULL
+names <- c("total_area_mm2", "Lvl1IE_orig")
+names(newMeta) <- names
+combined <- Add_Sample_Meta(combined, newMeta, join_by_seurat = "Lvl1IE_orig", join_by_meta = "Lvl1IE_orig", overwrite = T)
+
+# # removed the CD4.IE group so update the region (Epi -> CT) and corresponding region area
+# meta <- combined@meta.data
+# # Identify rows where L4 is "T.CD4.IE"
+# t_cd4_rows <- which(meta$L4 == "T.CD4.IE")
+# 
+# for (i in t_cd4_rows) {
+#   # Find matching row index based on orig.ident (excluding T.CD4.IE rows)
+#   matching_row <- which(meta$orig.ident[i] == meta$orig.ident & meta$L4 != "T.CD4.IE")
+#   print(meta$total_area_mm2[matching_row])
+#   
+#   # Update region and total_area_mm2 if a match is found
+#   if (length(matching_row) > 0) {
+#     meta$region[i] <- 'CT'
+#     meta$total_area_mm2[i] <- meta$total_area_mm2[matching_row]
+#   } else {
+#     print("Didnt find a matching row")
+#     # Handle cases where no matching row is found (optional)
+#     # metaK$region[i] <- NA  # Set a default value (optional)
+#     # metaK$total_area_mm2[i] <- NA  # Set a default value (optional)
+#   }
+# }
+# 
+# combined <- AddMetaData(combined, meta)
+```
+
+
+```{r generate proportions by region}
+Lvl1_area <- getCellsPerArea(seu_obj = combined,
+                              sample_id = "pt.id",
+                              section_id = "orig.ident",
+                              annotation = "Lvl1_IE",
+                              loc = "region",
+                              status = "status.2",
+                              area = "total_area_mm2")
+Lvl2_area <- getCellsPerArea(seu_obj = combined,
+                              sample_id = "pt.id",
+                              section_id = "orig.ident",
+                              annotation = "Lvl2_IE",
+                              loc = "region",
+                              status = "status.2",
+                              area = "total_area_mm2")
+Lvl3_area <- getCellsPerArea(seu_obj = combined,
+                              sample_id = "pt.id",
+                              section_id = "orig.ident",
+                              annotation = "Lvl3",
+                              loc = "region",
+                              status = "status.2",
+                              area = "total_area_mm2")
+Lvl4_area <- getCellsPerArea(seu_obj = combined,
+                              sample_id = "pt.id",
+                              section_id = "orig.ident",
+                              annotation = "Lvl4",
+                              loc = "region",
+                              status = "status.2",
+                              area = "total_area_mm2")
+```
+
+```{r Lvl1, fig.height=7, fig.width=9}
+# Lvl1_area$Lvl1 <- factor(Lvl1_area$Lvl1, levels=levels(combined$Lvl1))
+Lvl1_area <- Lvl1_area[!grepl("Unclear|Other", Lvl1_area$Lvl1_IE),]
+Lvl1_area <- Lvl1_area[!grepl("HV189", Lvl1_area$pt.id),]
+Lvl1_area <- Lvl1_area[!grepl("local|moderate|mild", Lvl1_area$status.2), ]
+stat.test <- Lvl1_area %>%
+    group_by(Lvl1_IE) %>%
+    t_test(cells_per_region_mm2 ~ status.2) %>%
+    adjust_pvalue(method = "BH") %>%
+    add_significance()
+fwrite(stat.test, file = paste0('/home/williamsdrw/xenium-hu-hvp/07_csv_outputs/', Sys.Date(), "_stats_HvP_byLvl1IE.csv"))
+bxp2 <- ggboxplot(
+  Lvl1_area, x = "status.2", y = "cells_per_region_mm2", fill = "status.2", 
+  facet.by = "Lvl1_IE", scales = "free", add = "jitter",
+  palette = paletteer::paletteer_d("ggthemes::wsj_dem_rep"), ylim = c(0,NA)
+  )
+# Make facet and add p-values
+stat.test <- stat.test %>% add_xy_position(x = "status.2")
+stat.test <- stat.test[stat.test$p.adj < 0.1, ]
+
+bxp2 +  
+  stat_pvalue_manual(
+    stat.test, hide.ns = F,
+    label = "p = {scales::pvalue(p.adj)}"
+    ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.1))) +
+  theme_ggprism_mod() + 
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank())
+
+
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_cellPerRegion_Lvl1.png"), dpi = 600, height=7, width=9.5)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_cellPerRegion_Lvl1.pdf"), dpi = 600, height=7, width=9.5)
+```
+
+```{r Lvl2, fig.height=7, fig.width=10.5}
+# Lvl2_area$Lvl2 <- factor(Lvl2_area$Lvl2, levels=levels(combined$Lvl2))
+Lvl2_area <- Lvl2_area[!grepl("Unclear", Lvl2_area$Lvl2_IE),]
+Lvl2_area <- Lvl2_area[!grepl("HV189", Lvl2_area$pt.id),]
+Lvl2_area <- Lvl2_area[!grepl("local|moderate|mild", Lvl2_area$status.2), ]
+stat.test <- Lvl2_area %>%
+    group_by(Lvl2_IE) %>%
+    t_test(cells_per_region_mm2 ~ status.2) %>%
+    adjust_pvalue(method = "BH") %>%
+    add_significance()
+fwrite(stat.test, file = paste0('/home/williamsdrw/xenium-hu-hvp/07_csv_outputs/', Sys.Date(), "_stats_HvP_byLvl2IE.csv"))
+bxp2 <- ggboxplot(
+  Lvl2_area, x = "status.2", y = "cells_per_region_mm2", fill = "status.2", 
+  facet.by = "Lvl2_IE", scales = "free", add = "jitter",
+  palette = paletteer::paletteer_d("ggthemes::wsj_dem_rep"), ylim = c(0,NA)
+  )
+# Make facet and add p-values
+stat.test <- stat.test %>% add_xy_position(x = "status.2")
+stat.test <- stat.test[stat.test$p.adj < 0.1, ]
+
+bxp2 +  
+  stat_pvalue_manual(
+    stat.test, hide.ns = F,
+    label = "p = {scales::pvalue(p.adj)}"
+    ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.1))) +
+  theme_ggprism_mod() + 
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank())
+
+
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_cellPerRegion_Lvl2.png"), dpi = 600, height=7, width=10.5)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_cellPerRegion_Lvl2.pdf"), dpi = 600, height=7, width=10.5)
+```
+
+```{r Lvl3, fig.height=8, fig.width=13}
+# Lvl3_area$Lvl3 <- factor(Lvl3_area$Lvl3, levels=levels(combined$Lvl3))
+Lvl3_area <- Lvl3_area[!grepl("Unclear|Other", Lvl3_area$Lvl3),]
+Lvl3_area <- Lvl3_area[!grepl("HV189", Lvl3_area$pt.id),]
+Lvl3_area <- Lvl3_area[!grepl("local|moderate|mild", Lvl3_area$status.2), ]
+stat.test <- Lvl3_area %>%
+    group_by(Lvl3) %>%
+    t_test(cells_per_region_mm2 ~ status.2) %>%
+    adjust_pvalue(method = "BH") %>%
+    add_significance()
+fwrite(stat.test, file = paste0('/home/williamsdrw/xenium-hu-hvp/07_csv_outputs/', Sys.Date(), "_stats_HvP_byLvl3IE.csv"))
+bxp2 <- ggboxplot(
+  Lvl3_area, x = "status.2", y = "cells_per_region_mm2", fill = "status.2", 
+  facet.by = "Lvl3", scales = "free", add = "jitter",
+  palette = paletteer::paletteer_d("ggthemes::wsj_dem_rep"), ylim = c(0,NA)
+  )
+# Make facet and add p-values
+stat.test <- stat.test %>% add_xy_position(x = "status.2")
+stat.test <- stat.test[stat.test$p.adj < 0.1, ]
+
+bxp2 +  
+  stat_pvalue_manual(
+    stat.test, hide.ns = F,
+    label = "p = {scales::pvalue(p.adj)}"
+    ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.12))) +
+  theme_ggprism_mod() + 
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank()) + 
+  labs(y = bquote('cells/region'~(mm^-2)))
+
+
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_cellPerRegion_Lvl3.png"), dpi = 600, height=8, width=13)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_cellPerRegion_Lvl3.pdf"), dpi = 600, height=8, width=13)
+```
+
+```{r Lvl4, fig.height=16, fig.width=26}
+# Lvl4_area$Lvl4 <- factor(Lvl4_area$Lvl4, levels=levels(combined$Lvl4))
+Lvl4_area <- Lvl4_area[!grepl("Unclear|Oth", Lvl4_area$Lvl4),]
+Lvl4_area <- Lvl4_area[!grepl("HV189", Lvl4_area$pt.id),]
+Lvl4_area <- Lvl4_area[!grepl("local|moderate|mild", Lvl4_area$status.2), ]
+stat.test <- Lvl4_area %>%
+    group_by(Lvl4) %>%
+    t_test(cells_per_region_mm2 ~ status.2) %>%
+    adjust_pvalue(method = "BH") %>%
+    add_significance()
+fwrite(stat.test, file = paste0('/home/williamsdrw/xenium-hu-hvp/07_csv_outputs/', Sys.Date(), "_stats_HvP_byLvl4IE.csv"))
+bxp2 <- ggboxplot(
+  Lvl4_area, x = "status.2", y = "cells_per_region_mm2", fill = "status.2", 
+  facet.by = "Lvl4", scales = "free", add = "jitter",
+  palette = paletteer::paletteer_d("ggthemes::wsj_dem_rep"), ylim = c(0,NA)
+  )
+# Make facet and add p-values
+stat.test <- stat.test %>% add_xy_position(x = "status.2")
+stat.test <- stat.test[stat.test$p.adj < 0.1, ]
+
+bxp2 +  
+  stat_pvalue_manual(
+    stat.test, hide.ns = F,
+    label = "p = {scales::pvalue(p.adj)}"
+    ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.12))) +
+  theme_ggprism_mod() + 
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank()) + 
+  labs(y = bquote('cells/region'~(mm^-2)))
+
+
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_cellPerRegion_Lvl4.png"), dpi = 600, height=16, width=26)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_cellPerRegion_Lvl4.pdf"), dpi = 600, height=16, width=26)
+```
+
+```{r metadata sex analysis, fig.height=20, fig.width=24}
+sex_result <- getCellsPerArea(seu_obj = combined,
+                              sample_id = "pt.id",
+                              section_id = "orig.ident",
+                              annotation = "Lvl4",
+                              loc = "region",
+                              status = "sex",
+                              area = "total_area_mm2")
+
+sex_result$Lvl4 <- factor(sex_result$Lvl4, levels=levels(combined$Lvl4))
+sex_result <- sex_result[!grepl("Undefined|Oth", sex_result$Lvl4),]
+sex_result <- sex_result[!grepl("HV181", sex_result$pt.id),]
+stat.test <- sex_result %>%
+    group_by(Lvl4) %>%
+    t_test(cells_per_region_mm2 ~ sex) %>%
+    adjust_pvalue(method = "bonferroni") %>%
+    add_significance()
+fwrite(stat.test, file = paste0('/home/williamsdrw/xenium-hu-hvp/07_csv_outputs/', Sys.Date(), "_stats_HvP_bySex.csv"))
+bxp5 <- ggboxplot(
+  sex_result, x = "sex", y = "cells_per_region_mm2", fill = "sex", 
+  facet.by = "Lvl4", scales = "free", add = "jitter",
+  palette = paletteer::paletteer_d("ggthemes::wsj_dem_rep"), ylim = c(0,NA)
+  )
+# Make facet and add p-values
+stat.test <- stat.test %>% 
+  add_xy_position(x = "status")
+
+stat.test <- stat.test[stat.test$p.adj < 0.1, ]
+bxp5 +  
+  #stat_pvalue_manual(
+  #  stat.test, hide.ns = F,
+  #  label = "p = {scales::pvalue(p.adj)}, {p.adj.signif}"
+  #  ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.1))) +
+  theme_ggprism_mod() + 
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank())
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_proportionSexSignif.png"), dpi = 600, height=20, width=24)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_proportionSexSignif.pdf"), dpi = 600, height=20, width=24)
+```
+
+```{r metadata race analysis, fig.height=20, fig.width=24}
+# NOTE: Race 'B' and 'A' only have one observation
+# Can't do stats on that - but nothing is significant anyway
+
+race_result <- getCellsPerArea(seu_obj = combined,
+                              sample_id = "pt.id",
+                              section_id = "orig.ident",
+                              annotation = "Lvl4",
+                              loc = "region",
+                              status = "race",
+                              area = "total_area_mm2")
+race_result$Lvl4 <- factor(race_result$Lvl4, levels=levels(combined$Lvl4))
+race_result <- race_result[!grepl(c("Undefined","Other"), race_result$Lvl4),]
+race_result <- race_result[!grepl("HV181", race_result$pt.id),]
+# stat.test <- race_result %>%
+#     group_by(Lvl4) %>%
+#     t_test(prop.loc ~ race) %>%
+#     adjust_pvalue(method = "bonferroni") %>%
+#     add_significance()
+# stat.test 
+bxp6 <- ggboxplot(
+  race_result, x = "race", y = "cells_per_region_mm2", fill = "race", 
+  facet.by = "Lvl4", scales = "free", add = "jitter", ylim = c(0,NA)
+  )
+# Make facet and add p-values
+# stat.test <- stat.test %>% add_xy_position(x = "race")
+bxp6 +  
+  # stat_pvalue_manual(
+  #   stat.test, hide.ns = TRUE,
+  #   label = "p={p.adj}"
+  #   ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.1))) +
+  theme_ggprism_mod() + 
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank())
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_proportionRaceSignif.png"), dpi = 600, height=20, width=24)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_proportionRaceSignif.pdf"), dpi = 600, height=20, width=24)
+```
+
+```{r cc10, fig.height=7, fig.width=10.5}
+cc10 <- getProportions(seu_obj = combined,
+                              sample_id = "pt.id",
+                              #section_id = "orig.ident",
+                              annotation = "cc10",
+                              loc = "region",
+                              status = "status.2")
+
+cc10$cc10 <- factor(cc10$cc10, levels=sort(unique(cc10$cc10)))
+cc10$cc10 <- factor(cc10$cc10, levels=sort(unique(cc10$cc10)))
+cc10 <- cc10[!grepl("Unclear|Oth", cc10$cc10),]
+cc10 <- cc10[!grepl("HV189", cc10$pt.id),]
+cc10 <- cc10[!grepl("local|moderate|mild", cc10$status.2), ]
+cc10$pt_cc <- paste0(cc10$pt.id, "_", cc10$cc10)
+cc10 <- cc10 %>%
+  distinct(pt_cc, .keep_all = T)
+
+
+stat.test <- cc10 %>%
+    group_by(cc10) %>%
+    t_test(prop.all ~ status.2) %>%
+    adjust_pvalue(method = "bonferroni") %>%
+    add_significance()
+fwrite(stat.test, file = paste0('/home/williamsdrw/xenium-hu-hvp/07_csv_outputs/', Sys.Date(), "_stats_HvP_byCC10.csv"))
+bxp5 <- ggboxplot(
+  cc10, x = "status.2", y = "prop.all", fill = "status.2", 
+  facet.by = "cc10", scales = "free", add = "jitter",
+  palette = paletteer::paletteer_d("ggthemes::wsj_dem_rep"), ylim = c(0,NA)
+  )
+# Make facet and add p-values
+stat.test <- stat.test %>% add_xy_position(x = "status.2")
+stat.test <- stat.test[stat.test$p.adj < 0.1, ]
+
+bxp5 +  
+  stat_pvalue_manual(
+    stat.test, hide.ns = F,
+    label = "p = {scales::pvalue(p.adj)}"
+    ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.12))) +
+  theme_ggprism_mod() + 
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank()) + 
+  labs(y = "proportion of cells")
+
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_proportion_cc10.png"), dpi = 600, height=7, width=10.5)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_proportion_cc10.pdf"), dpi = 600, height=7, width=10.5)
+
+combined$cc10 <- factor(combined$cc10, levels=sort(unique(combined$cc10)))
+combined$cc10 <- factor(combined$cc10, levels=sort(unique(combined$cc10)))
+
+table(combined$orig.ident, combined$cc10)
+
+Cluster_Highlight_Image_DimPlot(combined,
+                                  fov = names(combined@images)[c(8,10,3,11)],
+                                  split_by = "orig.ident",
+                                  cluster_level = "cc10",
+                                  # sample = as.character(unique(seuList[[i]]$Lvl2)),
+                                  isPdf = T,
+                                  size = 0.3,
+                                  col = 1,
+                                  w = 24,
+                                  h = 10)
+
+
+
+
+Idents(combined) <- "cc10"
+all_mkrs_cc10 <- FindAllMarkers(combined,
+                           only.pos = T,
+                           logfc.threshold = 0.8) 
+fwrite(all_mkrs_cc10,
+         file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/",
+                       Sys.Date(),
+                       "_cc10_allMarkers.csv"))
+all_mkrs_cc101 <- scCustomize::Extract_Top_Markers(all_mkrs_cc10, num_genes=4, group_by = "cluster", rank_by = "pct.1", data_frame = T)
+all_mkrs_cc102 <- scCustomize::Extract_Top_Markers(all_mkrs_cc10, num_genes=4, group_by = "cluster", rank_by = "avg_log2FC", data_frame = T)
+
+DotPlot_scCustom(combined, 
+                 features = rev(unique(c(all_mkrs_cc101$gene, all_mkrs_cc102$gene))), 
+                 group.by = "cc10", 
+                 x_lab_rotate = T, 
+                 col.min = 0,
+                 colors_use = c("white", "black")) + 
+  coord_flip() +
+  theme(panel.grid.major.y=element_line(size=0.1,colour="black"),
+        panel.grid.major.x=element_line(size=0.1,colour="black"))
+
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_dotplot_cc10.pdf"), dpi = 600, height=9, width=7)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_dotplot_cc10.png"), dpi = 600, height=9, width=7)
+
+# niche_celltype_counts <- table(combined$cc10, combined$Lvl3)
+# niche_totals <- colSums(niche_celltype_counts)
+# niche_percentages <- round(100 * t(niche_celltype_counts) / niche_totals, 2)
+# library(reshape2)
+# niche_percentages_long <- melt(niche_percentages)  # Melts the data frame
+# niche_percentages_long <- niche_percentages_long[niche_percentages_long$value > 0, ]  # Filter out entries with 0% expression
+# ggplot(niche_percentages_long, aes(x = Var2, y = value, fill = Var1)) +
+#   geom_bar(stat = "identity") +  # Set stat to "identity" for percentage data
+#   labs(title = "Percentage of Cell Types in Niches (Stacked)", x = "Cell Type", y = "Percentage (%)") +
+#   theme_classic()
+# #  scale_fill_brewer(palette = "Set2")  # Adjust palette for better distinction
+
+
+```
+```{r, fig.height=6.5, fig.width=12}
+test <- plot_stat_meta(combined, plot_type = "prop_fill", group_by = "cc10", clusterLabel = "Lvl3", pal_setup = combined@misc$Lvl2) + 
+       theme_ggprism_mod() +
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=45, hjust=1, vjust = 1, size = 8),
+              legend.title = element_blank(),
+              axis.ticks.x = element_blank(),
+              text = element_text(family = "Arial")) +
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted") +
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted")
+t <- test$data
+
+# Ensure 'freq' is numeric
+t$freq <- as.numeric(t$freq)  # Convert 'freq' to numeric if needed
+
+# Create a frequency table for the heatmap
+freq_table <- t %>%
+  pivot_wider(names_from = cluster, values_from = freq) %>%
+  select(-n, -group, -.group)  # Select columns excluding Lvl3
+
+collapsed_data <- freq_table %>%
+  group_by(group) %>%  # Group by unique values in column 17
+  summarise(across(everything(), ~ .x[1]))  # Extract first element from each column (excluding col17)
+
+# Create the heatmap
+pheatmap(freq_table[-1],
+         cluster_cols = FALSE,  # Don't cluster columns (groups)
+         cluster_rows = FALSE,   # Cluster rows (clusters)
+         show_colnames = TRUE,  # Show column names (groups)
+         show_rownames = TRUE,  # Show row names (clusters)
+         main = "Frequency Heatmap by Cluster and Group (min value set)",  # Set a title for the heatmap
+         fontsize_col = 10,    # Adjust column label size
+         fontsize_row = 10     # Adjust row label size
+         #color = viridis_heat,  # Use the viridis_heat color scheme
+)
+```
+```{r heatmap Xenium}
+# Assuming 'seurat_obj' is your Seurat object
+library(ggplot2)
+
+# Convert Seurat metadata to a data frame
+seurat_df <- as.data.frame(combined@meta.data)
+
+# Group by niche and calculate total cells per niche
+niche_totals <- seurat_df %>%
+  group_by(cc10) %>%
+  summarize(total_cells = n())
+
+# Group by niche category, calculate counts, and summarize percentages
+niche_groups2 <- seurat_df %>%
+  filter(!is.na(Lvl3)) %>%  # Filter out potentially missing Lvl3 values
+  mutate(niche_category = cc10) %>%  # Extract numeric niche category
+  group_by(Lvl3, cc10) %>%
+  summarize(count = n()) %>%
+  ungroup() %>%  # Ungroup to allow calculation across niche categories
+  left_join(niche_totals, by = "cc10") %>%
+  mutate(percent_in_niche = count / total_cells * 100) %>%
+  group_by(cc10) %>%  # Group by niche category again
+  select(-count) %>%
+  pivot_wider(names_from = Lvl3, values_from = percent_in_niche, values_fill = 0)
+
+# Set row and column names
+rownames(niche_groups2) <- niche_groups2$cc10
+niche_groups2$cc10 <- NULL
+niche_groups2$total_cells <- NULL
+
+# Convert to matrix and adjust row names
+data_matrix2 <- as.matrix(niche_groups2)
+rownames(data_matrix2) <- as.character(c(0:9))
+
+# Create the heatmap
+pheatmap(data_matrix2,
+         colnames = as.character(c(0:9)),  # Set column names as row names
+         rownames = colnames(niche_groups2), # Set row names as column names (exclude first column)
+         show_colnames = TRUE,              # Show column names
+         show_rownames = TRUE,              # Show row names
+         main = "Cell Type Distribution in Niches",  # Set a title for the heatmap
+         fontsize_col = 10,                # Adjust column label size
+         fontsize_row = 10,                 # Adjust row label size,
+         cluster_cols = T,
+         cluster_rows = T,
+         color = viridis_magma_light_high
+)
+
+
+# Aggregate counts by niche and spatial cluster
+niche_groups <- seurat_df %>%
+  group_by(cc10, Lvl3) %>%
+  summarize(count = n()) %>%
+  pivot_wider(names_from = Lvl3, values_from = count, values_fill = 0)
+
+rownames(niche_groups) <- niche_groups$cc10
+niche_groups$cc10 <- NULL
+# Convert the table to a matrix (assuming numeric values)
+data_matrix <- as.matrix(niche_groups)
+rownames(data_matrix) <- as.character(c(0:9))
+
+library(pheatmap)
+
+# Create the heatmap
+pheatmap(data_matrix,
+         colnames = as.character(c(0:9)),  # Set column names as row names
+         rownames = colnames(niche_groups)[-1], # Set row names as column names (exclude first column)
+         show_colnames = TRUE,              # Show column names
+         show_rownames = TRUE,              # Show row names
+         main = "Cell Type Distribution in Niches",  # Set a title for the heatmap
+         fontsize_col = 10,                # Adjust column label size
+         fontsize_row = 10,                 # Adjust row label size,
+         cluster_cols = F,
+         cluster_rows = F,
+         color = viridis_magma_light_high
+)
+```
+
+```{r heatmap IBEX}
+
+# Convert Seurat metadata to a data frame
+ibex_df <- fread('/home/williamsdrw/xenium-hu-hvp/03_meta_data/adata_ROIs.csv')
+
+# Group by niche and calculate total cells per niche
+niche_totals2 <- ibex_df %>%
+  group_by(niche) %>%
+  summarize(total_cells = n())
+
+# Group by niche category, calculate counts, and summarize percentages
+niche_groups3 <- ibex_df %>%
+  filter(!is.na(lvl3_spatial_cluster)) %>%  # Filter out potentially missing Lvl3 values
+  mutate(niche_category = niche) %>%  # Extract numeric niche category
+  group_by(lvl3_spatial_cluster, niche) %>%
+  summarize(count = n()) %>%
+  ungroup() %>%  # Ungroup to allow calculation across niche categories
+  left_join(niche_totals2, by = "niche") %>%
+  mutate(percent_in_niche = count / total_cells * 100) %>%
+  group_by(niche) %>%  # Group by niche category again
+  select(-count) %>%
+  pivot_wider(names_from = lvl3_spatial_cluster, values_from = percent_in_niche, values_fill = 0)
+
+# Set row and column names
+rn <- niche_groups3$niche
+niche_groups3$niche <- NULL
+niche_groups3$total_cells <- NULL
+
+# Convert to matrix and adjust row names
+data_matrix3 <- as.matrix(niche_groups3)
+rownames(data_matrix3) <- rn
+
+
+# Create the heatmap
+pheatmap(data_matrix3,
+         colnames = rn,  # Set column names as row names
+         rownames = colnames(niche_groups3), # Set row names as column names (exclude first column)
+         show_colnames = TRUE,              # Show column names
+         show_rownames = TRUE,              # Show row names
+         main = "Cell Type Distribution in Niches",  # Set a title for the heatmap
+         fontsize_col = 10,                # Adjust column label size
+         fontsize_row = 10,                 # Adjust row label size,
+         cluster_cols = F,
+         cluster_rows = T,
+         color = viridis_magma_light_high
+)
+```
+
+```{r cc16, fig.height=20, fig.width=24}
+cc16 <- getProportions(seu_obj = combined,
+                              sample_id = "pt.id",
+                              #section_id = "orig.ident",
+                              annotation = "cc16",
+                              loc = "region",
+                              status = "status.2")
+
+cc16$cc16 <- factor(cc16$cc16, levels=sort(unique(cc16$cc16)))
+cc16$cc16 <- factor(cc16$cc16, levels=sort(unique(cc16$cc16)))
+cc16 <- cc16[!grepl("Unclear|Oth", cc16$cc16),]
+cc16 <- cc16[!grepl("HV189", cc16$pt.id),]
+cc16 <- cc16[!grepl("local|moderate|mild", cc16$status.2), ]
+cc16$pt_cc <- paste0(cc16$pt.id, "_", cc16$cc16)
+cc16 <- cc16 %>%
+  distinct(pt_cc, .keep_all = T)
+
+
+stat.test <- cc16 %>%
+    group_by(cc16) %>%
+    t_test(prop.all ~ status.2) %>%
+    adjust_pvalue(method = "bonferroni") %>%
+    add_significance()
+fwrite(stat.test, file = paste0('/home/williamsdrw/xenium-hu-hvp/07_csv_outputs/', Sys.Date(), "_stats_HvP_byCC16.csv"))
+bxp5 <- ggboxplot(
+  cc16, x = "status.2", y = "prop.all", fill = "status.2", 
+  facet.by = "cc16", scales = "free", add = "jitter",
+  palette = paletteer::paletteer_d("ggthemes::wsj_dem_rep"), ylim = c(0,NA)
+  )
+# Make facet and add p-values
+stat.test <- stat.test %>% add_xy_position(x = "status.2")
+stat.test <- stat.test[stat.test$p.adj < 0.1, ]
+
+bxp5 +  
+  stat_pvalue_manual(
+    stat.test, hide.ns = F,
+    label = "p = {scales::pvalue(p.adj)}, {p.adj.signif}"
+    ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.12))) +
+  theme_ggprism_mod() + 
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank()) + 
+  labs(y = "proportion of cells")
+
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_proportion_cc16.png"), dpi = 600, height=7, width=10.5)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_proportion_cc16.pdf"), dpi = 600, height=7, width=10.5)
+
+combined$cc16 <- factor(combined$cc16, levels=sort(unique(combined$cc16)))
+combined$cc16 <- factor(combined$cc16, levels=sort(unique(combined$cc16)))
+
+table(combined$orig.ident, combined$cc16)
+
+Cluster_Highlight_Image_DimPlot(combined,
+                                  fov = names(combined@images)[c(8,10,3,11)],
+                                  split_by = "orig.ident",
+                                  cluster_level = "cc16",
+                                  # sample = as.character(unique(seuList[[i]]$Lvl2)),
+                                  isPdf = T,
+                                  size = 0.3,
+                                  col = 1,
+                                  w = 24,
+                                  h = 10)
+
+
+Idents(combined) <- "cc16"
+all_mkrs_cc16 <- FindAllMarkers(combined,
+                           only.pos = T,
+                           logfc.threshold = 0.8)
+fwrite(all_mkrs_cc16,
+         file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/",
+                       Sys.Date(),
+                       "_cc16_allMarkers.csv"))
+all_mkrs_cc161 <- scCustomize::Extract_Top_Markers(all_mkrs_cc16, num_genes=4, group_by = "cluster", rank_by = "pct.1", data_frame = T)
+all_mkrs_cc162 <- scCustomize::Extract_Top_Markers(all_mkrs_cc16, num_genes=4, group_by = "cluster", rank_by = "avg_log2FC", data_frame = T)
+
+DotPlot_scCustom(combined, 
+                 features = rev(unique(c(all_mkrs_cc161$gene, all_mkrs_cc162$gene))), 
+                 group.by = "cc16", 
+                 x_lab_rotate = T, 
+                 col.min = 0,
+                 colors_use = c("white", "black")) + 
+  coord_flip() +
+  theme(panel.grid.major.y=element_line(size=0.1,colour="black"),
+        panel.grid.major.x=element_line(size=0.1,colour="black"))
+
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_dotplot_cc16.pdf"), dpi = 600, height=9, width=7)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_dotplot_cc16.png"), dpi = 600, height=9, width=7)
+
+```
+
+```{r cc24, fig.height=20, fig.width=24}
+cc24 <- getProportions(seu_obj = combined,
+                              sample_id = "pt.id",
+                              #section_id = "orig.ident",
+                              annotation = "cc24",
+                              loc = "region",
+                              status = "status.2")
+
+cc24$cc24 <- factor(cc24$cc24, levels=sort(unique(cc24$cc24)))
+cc24$cc24 <- factor(cc24$cc24, levels=sort(unique(cc24$cc24)))
+cc24 <- cc24[!grepl("Unclear|Oth", cc24$cc24),]
+cc24 <- cc24[!grepl("HV189", cc24$pt.id),]
+cc24 <- cc24[!grepl("local|moderate|mild", cc24$status.2), ]
+cc24$pt_cc <- paste0(cc24$pt.id, "_", cc24$cc24)
+cc24 <- cc24 %>%
+  distinct(pt_cc, .keep_all = T)
+
+
+stat.test <- cc24 %>%
+    group_by(cc24) %>%
+    t_test(prop.all ~ status.2) %>%
+    adjust_pvalue(method = "bonferroni") %>%
+    add_significance()
+fwrite(stat.test, file = paste0('/home/williamsdrw/xenium-hu-hvp/07_csv_outputs/', Sys.Date(), "_stats_HvP_byCC24.csv"))
+bxp5 <- ggboxplot(
+  cc24, x = "status.2", y = "prop.all", fill = "status.2", 
+  facet.by = "cc24", scales = "free", add = "jitter",
+  palette = paletteer::paletteer_d("ggthemes::wsj_dem_rep"), ylim = c(0,NA)
+  )
+# Make facet and add p-values
+stat.test <- stat.test %>% add_xy_position(x = "status.2")
+stat.test <- stat.test[stat.test$p.adj < 0.1, ]
+
+bxp5 +  
+  stat_pvalue_manual(
+    stat.test, hide.ns = F,
+    label = "p = {scales::pvalue(p.adj)}, {p.adj.signif}"
+    ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.12))) +
+  theme_ggprism_mod() + 
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank()) + 
+  labs(y = "proportion of cells")
+
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_proportion_cc24.png"), dpi = 600, height=9, width=11.5)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_proportion_cc24.pdf"), dpi = 600, height=9, width=11.5)
+
+combined$cc24 <- factor(combined$cc24, levels=sort(unique(combined$cc24)))
+
+table(combined$orig.ident, combined$cc24)
+
+
+Cluster_Highlight_Image_DimPlot(combined,
+                                  fov = names(combined@images)[c(3,10,11)], # sample 8 is missing niche 16 which messes up the image so it is omitted
+                                  split_by = "orig.ident",
+                                  cluster_level = "cc24",
+                                  # sample = as.character(unique(seuList[[i]]$Lvl2)),
+                                  isPdf = T,
+                                  size = 0.3,
+                                  col = 1,
+                                  w = 24,
+                                  h = 10)
+
+
+Idents(combined) <- "cc24"
+all_mkrs_cc24 <- FindAllMarkers(combined,
+                           only.pos = T,
+                           logfc.threshold = 0.8)
+fwrite(all_mkrs_cc24,
+         file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/",
+                       Sys.Date(),
+                       "_cc24_allMarkers.csv"))
+all_mkrs_cc241 <- scCustomize::Extract_Top_Markers(all_mkrs_cc24, num_genes=4, group_by = "cluster", rank_by = "pct.1", data_frame = T)
+all_mkrs_cc242 <- scCustomize::Extract_Top_Markers(all_mkrs_cc24, num_genes=4, group_by = "cluster", rank_by = "avg_log2FC", data_frame = T)
+
+DotPlot_scCustom(combined, 
+                 features = rev(unique(c(all_mkrs_cc241$gene, all_mkrs_cc242$gene))), 
+                 group.by = "cc24", 
+                 x_lab_rotate = T, 
+                 col.min = 0,
+                 colors_use = c("white", "black")) + 
+  coord_flip() +
+  theme(panel.grid.major.y=element_line(size=0.1,colour="black"),
+        panel.grid.major.x=element_line(size=0.1,colour="black"))
+
+test <- FindMarkers(combined,
+           ident.1 = "8",
+           ident.2 = "4")
+test2 <- FindMarkers(combined,
+           ident.2 = "8",
+           ident.1 = "4")
+
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_dotplot_cc24.pdf"), dpi = 600, height=14, width=7)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_dotplot_cc24.png"), dpi = 600, height=14, width=7)
+
+```
+
+
+```{r, fig.width=12, fig.height=20}
+a <- ImageDimPlot(combined,
+             fov = names(combined@images)[c(8,10)],
+             group.by = "Lvl1",
+             cols = combined@misc$Lvl1,
+             dark.background = F,
+             combine = T,
+             crop = T,
+             size = 0.25) & 
+  theme(legend.position = "none")
+a2 <- wrap_plots(a, ncol=1)
+
+b <- ImageDimPlot(combined,
+             fov = names(combined@images)[c(3,11)],
+             group.by = "Lvl1",
+             cols = combined@misc$Lvl1,
+             dark.background = F,
+             combine = T,
+             crop = T,
+             size = 0.25) & 
+  theme_void() &
+  theme(axis.title=element_blank(),
+        axis.text.x = element_blank(),
+        legend.position = "none")
+b2 <- wrap_plots(b, ncol=1)
+
+
+c <- ImageDimPlot(combined,
+             fov = names(combined@images[c(8,10)]),
+             group.by = "epiHL",
+             cols = combined@misc$epiHL,
+             dark.background = F,
+             combine = T,
+             crop = T,
+             size = 0.25) &
+  theme(legend.position = "none")
+c2 <- wrap_plots(c, ncol = 1)
+
+d <- ImageDimPlot(combined,
+             fov = names(combined@images[c(8,10)]),
+             group.by = "endoHL",
+             cols = combined@misc$endoHL,
+             dark.background = F,
+             combine = T,
+             size = 0.25,
+             crop = T) &
+  theme(legend.position = "none")
+d2 <- wrap_plots(d, ncol = 1)
+
+e <- ImageDimPlot(combined,
+             fov = names(combined@images[c(8,10)]),
+             group.by = "fibHL",
+             cols = combined@misc$fibHL,
+             dark.background = F,
+             combine = T,
+             size = 0.25,
+             crop = T) &
+  theme(legend.position = "none")
+e2 <- wrap_plots(e, ncol = 1)
+
+f <- ImageDimPlot(combined,
+             fov = names(combined@images[c(8,10)]),
+             group.by = "lymphoidHL",
+             cols = combined@misc$lymphoidHL,
+             dark.background = F,
+             combine = T,
+             size = 0.25,
+             crop = T)  &
+  theme(legend.position = "none")
+f2 <- wrap_plots(f, ncol = 1)
+
+g <- ImageDimPlot(combined,
+             fov = names(combined@images[c(8,10)]),
+             group.by = "myeloidHL",
+             cols = combined@misc$myeloidHL,
+             dark.background = F,
+             combine = T,
+             size = 0.25,
+             crop = T)  &
+  theme(legend.position = "none")
+g2 <- wrap_plots(g, ncol = 1)
+
+CairoPDF(file=paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/",Sys.Date(),"_ImageDim_allCombinations.pdf"), width = 11.5, height = 3.75, onefile=T)
+a2
+b2
+c2
+d2
+e2
+f2
+g2
+dev.off()
+# ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_imageDimPlot_EndoFibImEpi.png"), dpi = 600, height=13, width=10)
+```
+```{r, fig.height=15, fig.width=19}
+c3 <- plot_stat_meta(combined, plot_type = "prop_fill", group_by = "status.3", clusterLabel = "epiHL", pal_setup = combined@misc$epiHL) + 
+       theme_ggprism_mod() +
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=45, hjust=1, vjust = 1),
+              legend.title = element_blank(),
+              axis.ticks.x = element_blank(),
+              text = element_text(family = "Arial")) +
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted") +
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted")
+c4 <- plot_stat_meta(combined, plot_type = "prop_fill", group_by = "pt.id", clusterLabel = "epiHL", pal_setup = combined@misc$epiHL) + 
+       theme_ggprism_mod() +
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=45, hjust=1, vjust = 1),
+              axis.text.y = element_blank(),
+              legend.title = element_blank(),
+              axis.ticks = element_blank(),
+              text = element_text(family = "Arial")) + 
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted") + 
+  geom_vline(xintercept = 6.5, color="red", size = 1)
+
+epiBP <- c3+
+  guides(fill=F)+
+  c4 +
+  plot_layout(widths = c(1,6))
+
+d3 <- plot_stat_meta(combined, plot_type = "prop_fill", group_by = "status.3", clusterLabel = "endoHL", pal_setup = combined@misc$endoHL) + 
+       theme_ggprism_mod() +
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=45, hjust=1, vjust = 1),
+              legend.title = element_blank(),
+              axis.ticks.x = element_blank(),
+              text = element_text(family = "Arial")) +
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted") +
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted")
+d4 <- plot_stat_meta(combined, plot_type = "prop_fill", group_by = "pt.id", clusterLabel = "endoHL", pal_setup = combined@misc$endoHL) + 
+       theme_ggprism_mod() +
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=45, hjust=1, vjust = 1),
+              axis.text.y = element_blank(),
+              legend.title = element_blank(),
+              axis.ticks = element_blank(),
+              text = element_text(family = "Arial")) + 
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted") + 
+  geom_vline(xintercept = 6.5, color="red", size = 1)
+
+endoBP <- d3+
+  guides(fill=F)+
+  d4 +
+  plot_layout(widths = c(1,6))
+
+e3 <- plot_stat_meta(combined, plot_type = "prop_fill", group_by = "status.3", clusterLabel = "fibHL", pal_setup = combined@misc$fibHL) + 
+       theme_ggprism_mod() +
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=45, hjust=1, vjust = 1),
+              legend.title = element_blank(),
+              axis.ticks.x = element_blank(),
+              text = element_text(family = "Arial")) +
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted") +
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted")
+e4 <- plot_stat_meta(combined, plot_type = "prop_fill", group_by = "pt.id", clusterLabel = "fibHL", pal_setup = combined@misc$fibHL) + 
+       theme_ggprism_mod() +
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=45, hjust=1, vjust = 1),
+              axis.text.y = element_blank(),
+              legend.title = element_blank(),
+              axis.ticks = element_blank(),
+              text = element_text(family = "Arial")) + 
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted") + 
+  geom_vline(xintercept = 6.5, color="red", size = 1)
+
+fibBP <- e3+
+  guides(fill=F)+
+  e4 +
+  plot_layout(widths = c(1,6))
+
+f3 <- plot_stat_meta(combined, plot_type = "prop_fill", group_by = "status.3", clusterLabel = "lymphoidHL", pal_setup = combined@misc$lymphoidHL) + 
+       theme_ggprism_mod() +
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=45, hjust=1, vjust = 1),
+              legend.title = element_blank(),
+              axis.ticks.x = element_blank(),
+              text = element_text(family = "Arial")) +
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted") +
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted")
+f4 <- plot_stat_meta(combined, plot_type = "prop_fill", group_by = "pt.id", clusterLabel = "lymphoidHL", pal_setup = combined@misc$lymphoidHL) + 
+       theme_ggprism_mod() +
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=45, hjust=1, vjust = 1),
+              axis.text.y = element_blank(),
+              legend.title = element_blank(),
+              axis.ticks = element_blank(),
+              text = element_text(family = "Arial")) + 
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted") + 
+  geom_vline(xintercept = 6.5, color="red", size = 1)
+
+lymphBP <- f3+
+  guides(fill=F)+
+  f4 +
+  plot_layout(widths = c(1,6))
+
+g3 <- plot_stat_meta(combined, plot_type = "prop_fill", group_by = "status.3", clusterLabel = "myeloidHL", pal_setup = combined@misc$myeloidHL) + 
+       theme_ggprism_mod() +
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=45, hjust=1, vjust = 1),
+              legend.title = element_blank(),
+              axis.ticks.x = element_blank(),
+              text = element_text(family = "Arial")) +
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted") +
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted")
+g4 <- plot_stat_meta(combined, plot_type = "prop_fill", group_by = "pt.id", clusterLabel = "myeloidHL", pal_setup = combined@misc$myeloidHL) + 
+       theme_ggprism_mod() +
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=45, hjust=1, vjust = 1),
+              axis.text.y = element_blank(),
+              legend.title = element_blank(),
+              axis.ticks = element_blank(),
+              text = element_text(family = "Arial")) + 
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted") + 
+  geom_vline(xintercept = 6.5, color="red", size = 1)
+
+mylBP <- g3+
+  guides(fill=F)+
+  g4 +
+  plot_layout(widths = c(1,6))
+
+wrap_plots(d2,endoBP,
+           c2,epiBP,
+           e2,fibBP,
+           f2,lymphBP,
+           g2, mylBP, ncol=2) + plot_layout(widths = c(3,1))
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/",Sys.Date(),"_ImageDim-stackedBar_Endo-Epi-Fib-Im.png"), dpi = 600, height=18.75, width=19)
+
+wrap_plots(d2,endoBP, ncol=2) + plot_layout(widths = c(3,1))
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/",Sys.Date(),"_ImageDim-stackedBar_Endo.png"), dpi = 600, height=3.75, width=19)
+wrap_plots(c2,epiBP, ncol=2) + plot_layout(widths = c(3,1))
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/",Sys.Date(),"_ImageDim-stackedBar_Epi.png"), dpi = 600, height=3.75, width=19)
+wrap_plots(e2,fibBP, ncol=2) + plot_layout(widths = c(3,1))
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/",Sys.Date(),"_ImageDim-stackedBar_Fib.png"), dpi = 600, height=3.75, width=19)
+wrap_plots(f2,lymphBP, ncol=2) + plot_layout(widths = c(3,1))
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/",Sys.Date(),"_ImageDim-stackedBar_Lymphoid.png"), dpi = 600, height=3.75, width=19)
+wrap_plots(g2,mylBP, ncol=2) + plot_layout(widths = c(3,1))
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/",Sys.Date(),"_ImageDim-stackedBar_Myeloid.png"), dpi = 600, height=3.75, width=19)
+
+# wrap_plots(c2,epiBP,ncol=2) + plot_layout(widths = c(3,1))
+# ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/",Sys.Date(),"_ImageDim-stackedBar_Epi.png"), dpi = 600, height=3.75, width=19)
+# 
+# wrap_plots(e2,fibBP,ncol=2) + plot_layout(widths = c(3,1))
+# ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/",Sys.Date(),"_ImageDim-stackedBar_Fib.png"), dpi = 600, height=3.75, width=19)
+# 
+# wrap_plots(f2,imBP,ncol=2) + plot_layout(widths = c(3,1))
+# ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/",Sys.Date(),"_ImageDim-stackedBar_Im.png"), dpi = 600, height=3.75, width=19)
+
+
+```
+```{r}
+a3 <- plot_stat_meta(combined, plot_type = "prop_fill", group_by = "status.3", clusterLabel = "Lvl1", pal_setup = combined@misc$Lvl1) + 
+       theme_ggprism_mod() +
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=45, hjust=1, vjust = 1),
+              legend.title = element_blank(),
+              axis.ticks.x = element_blank(),
+              text = element_text(family = "Arial")) +
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted") +
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted")
+a4 <- plot_stat_meta(combined, plot_type = "prop_fill", group_by = "pt.id", clusterLabel = "Lvl1", pal_setup = combined@misc$Lvl1) + 
+       theme_ggprism_mod() +
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=45, hjust=1, vjust = 1),
+              axis.text.y = element_blank(),
+              legend.title = element_blank(),
+              axis.ticks = element_blank(),
+              text = element_text(family = "Arial")) + 
+        geom_hline(yintercept=seq(0,1,by=0.25), linetype="dotted") + 
+  geom_vline(xintercept = 6.5, color="red", size = 1)
+
+genBP <- a3 + guides(fill=F)+
+  a4 + plot_layout(widths = c(1,6))
+
+wrap_plots(a2,genBP,ncol=2) + plot_layout(widths = c(3,1))
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/",Sys.Date(),"_ImageDim-stackedBar_majorCellTypes.png"), dpi = 600, height=3.75, width=19)
+
+```
+
+
+```{r}
+# save prelim annotation
+saveRDS(combined, file = paste0("/home/williamsdrw/xenium-hu-hvp/04_data_objects/05_Analysis/", Sys.Date(), "_05.RDS"))
+```
+
+# Vasilis data stats
+
+```{r}
+l1 <- fread('/home/williamsdrw/xenium-hu-hvp/03_meta_data/lvl1_stats_vt.csv')
+#l1 <- l1[!grepl("Unclear|Oth", l1$Lvl4),]
+# l1 <- l1[!grepl("HV160|HV171", l1$patient),] # least strict
+l1 <- l1[!grepl("HV160|HV171|HV154|HV220", l1$patient),] # mid
+# l1 <- l1[!grepl("HV160|HV171|HV154|HV220|HV204|TM327|HV191|HV207", l1$patient),] # most strict
+l1$status <- factor(l1$status, levels = c("Healthy", "Perio"))
+
+#l1 <- l1[!grepl("local|moderate|mild", l1$status.2), ]
+stat.test <- l1 %>%
+    group_by(annotation) %>%
+    t_test(cells_per_region_mm2 ~ status) %>%
+#    adjust_pvalue(method = "BH") %>%
+    add_significance()
+fwrite(stat.test, file = paste0('/home/williamsdrw/xenium-hu-hvp/07_csv_outputs/', Sys.Date(), "_stats_HvP_byLvl1_vt.csv"))
+
+
+bxp2 <- ggboxplot(
+  l1, x = "status", y = "cells_per_region_mm2", fill = "status", 
+  facet.by = "annotation", scales = "free", add = "jitter",
+  palette = paletteer::paletteer_d("ggthemes::wsj_dem_rep"), ylim = c(0,NA)
+  )
+# Make facet and add p-values
+stat.test <- stat.test %>% add_xy_position(x = "status")
+stat.test <- stat.test[stat.test$p < 0.1, ]
+
+bxp2 +  
+  stat_pvalue_manual(
+    stat.test, hide.ns = F,
+    label = "p = {scales::pvalue(p)}"
+    ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.12))) +
+  theme_ggprism_mod() + 
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank()) + 
+  labs(y = bquote('cells/region'~(mm^-2)))
+
+
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_cellPerRegion_Lvl1_vt_mid.png"), dpi = 600, height=7, width=9.5)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_cellPerRegion_Lvl1_vt_mid.pdf"), dpi = 600, height=7, width=9.5)
+```
+
+```{r, fig.height=10, fig.width=13}
+l3 <- fread('/home/williamsdrw/xenium-hu-hvp/03_meta_data/lvl3_stats_vt.csv')
+#l3 <- l3[!grepl("Unclear|Oth", l3$Lvl4),]
+# l3 <- l3[!grepl("HV160|HV171", l3$patient),] # least strict
+l3 <- l3[!grepl("HV160|HV171|HV154|HV220", l3$patient),] # mid
+# l3 <- l3[!grepl("HV160|HV171|HV154|HV220|HV204|TM327|HV191|HV207", l3$patient),] # most strict
+l3$status <- factor(l3$status, levels = c("Healthy", "Perio"))
+
+#l3 <- l3[!grepl("local|moderate|mild", l3$status.2), ]
+stat.test <- l3 %>%
+    group_by(annotation) %>%
+    t_test(cells_per_region_mm2 ~ status) %>%
+ #   adjust_pvalue(method = "BH") %>%
+    add_significance()
+fwrite(stat.test, file = paste0('/home/williamsdrw/xenium-hu-hvp/07_csv_outputs/', Sys.Date(), "_stats_HvP_byLvl3_vt.csv"))
+
+
+bxp2 <- ggboxplot(
+  l3, x = "status", y = "cells_per_region_mm2", fill = "status", 
+  facet.by = "annotation", scales = "free", add = "jitter",
+  palette = paletteer::paletteer_d("ggthemes::wsj_dem_rep"), ylim = c(0,NA)
+  )
+# Make facet and add p-values
+stat.test <- stat.test %>% add_xy_position(x = "status")
+stat.test <- stat.test[stat.test$p < 0.1, ]
+
+bxp2 +  
+  stat_pvalue_manual(
+    stat.test, hide.ns = F,
+    label = "p = {scales::pvalue(p)}"
+    ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.12))) +
+  theme_ggprism_mod() + 
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank()) + 
+  labs(y = bquote('cells/region'~(mm^-2)))
+
+
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_cellPerRegion_Lvl3_vt_mid.png"), dpi = 600, height=10, width=13)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_cellPerRegion_Lvl3_vt_mid.pdf"), dpi = 600, height=10, width=13)
+```
+
+```{r}
+l4 <- fread('/home/williamsdrw/xenium-hu-hvp/03_meta_data/lvl4_stats_vt.csv')
+l4 <- l4[!grepl("Unclear|Oth", l4$annotation),]
+# l4 <- l4[!grepl("HV160|HV171", l4$patient),] # least strict
+l4 <- l4[!grepl("HV160|HV171|HV154|HV220", l4$patient),] # mid
+# l4 <- l4[!grepl("HV160|HV171|HV154|HV220|HV204|TM327|HV191|HV207", l4$patient),] # most strict
+l4$status <- factor(l4$status, levels = c("Healthy", "Perio"))
+
+#l4 <- l4[!grepl("local|moderate|mild", l4$status.2), ]
+stat.test <- l4 %>%
+    group_by(annotation) %>%
+    t_test(cells_per_region_mm2 ~ status) %>%
+    #adjust_pvalue(method = "BH") %>%
+    add_significance()
+fwrite(stat.test, file = paste0('/home/williamsdrw/xenium-hu-hvp/07_csv_outputs/', Sys.Date(), "_stats_HvP_byLvl4_vt.csv"))
+
+
+bxp2 <- ggboxplot(
+  l4, x = "status", y = "cells_per_region_mm2", fill = "status", 
+  facet.by = "annotation", scales = "free", add = "jitter",
+  palette = paletteer::paletteer_d("ggthemes::wsj_dem_rep"), ylim = c(0,NA)
+  )
+# Make facet and add p-values
+stat.test <- stat.test %>% add_xy_position(x = "status")
+stat.test <- stat.test[stat.test$p < 0.1, ]
+
+bxp2 +  
+  stat_pvalue_manual(
+    stat.test, hide.ns = F,
+    label = "p = {scales::pvalue(p)}"
+    ) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.12))) +
+  theme_ggprism_mod() + 
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_blank()) + 
+  labs(y = bquote('cells/region'~(mm^-2)))
+
+
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_cellPerRegion_Lvl4_vt_mid.png"), dpi = 600, height=15, width=24)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_cellPerRegion_Lvl4_vt_mid.pdf"), dpi = 600, height=15, width=24)
+```
+
+```{r, fig.height=6, fig.width=6}
+
+Idents(combined) <- "Lvl2"
+all_mkrs_L2 <- FindMarkers(combined,
+                           ident.1 = "Epithelial (crevicular)",
+                           ident.2 = "Epithelial (oral)",
+                           only.pos = T,
+                           logfc.threshold = 0.8) 
+all_mkrs_L2$cluster <- "ex"
+
+all_mkrs_or <- FindMarkers(combined,
+                           ident.2 = "Epithelial (crevicular)",
+                           ident.1 = "Epithelial (oral)",
+                           only.pos = T,
+                           logfc.threshold = 0.8) 
+all_mkrs_or$cluster <- "ex"
+
+top <- Extract_Top_Markers(marker_dataframe = all_mkrs_L2, num_genes = 5, rank_by = "pct.1", data_frame = T, gene_rownames_to_column = T)
+top2 <- Extract_Top_Markers(marker_dataframe = all_mkrs_L2, num_genes = 5, rank_by = "avg_log2FC", data_frame = T, gene_rownames_to_column = T)
+top3 <- Extract_Top_Markers(marker_dataframe = all_mkrs_or, num_genes = 5, rank_by = "pct.1", data_frame = T, gene_rownames_to_column = T)
+top4 <- Extract_Top_Markers(marker_dataframe = all_mkrs_or, num_genes = 5, rank_by = "avg_log2FC", data_frame = T, gene_rownames_to_column = T)
+
+DotPlot_scCustom(combined, 
+                 features = rev(unique(c(top$gene, top2$gene, top3$gene, top4$gene))), 
+                 group.by = "Lvl2", 
+                 x_lab_rotate = T, 
+                 col.min = 0,
+                 colors_use = c("white", "black")) + 
+  coord_flip() +
+  theme(panel.grid.major.y=element_line(size=0.1,colour="black"),
+        panel.grid.major.x=element_line(size=0.1,colour="black"))
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_dotplot_Epi-cr-vs-oral_Lvl2.pdf"), dpi = 600, height=6, width=6)
+ggsave(filename = paste0("/home/williamsdrw/xenium-hu-hvp/08_final_plots_for_figures/", Sys.Date(), "_dotplot_Epi-cr-vs-oral_Lvl2.png"), dpi = 600, height=6, width=6)
+```
+```
+
+
+
+
+```{r, fig.width=10, fig.height=10}
+ImageFeaturePlot(combined,
+                 features = c("CD300E"),
+                 fov = names(combined@images[c(10)]),
+                 crop=T,
+                 size = 1,
+                 dark.background = F)
+```
+
+```{r, fig.width=10, fig.height=10}
+ImageFeaturePlot(combined,
+                 features = c("FFAR2"),
+                 fov = names(combined@images[c(10)]),
+                 crop=T,
+                 size = 1,
+                 dark.background = F)
+```
+
+```{r, fig.width=10, fig.height=10}
+ImageFeaturePlot(combined,
+                 features = c("CSF3R"),
+                 fov = names(combined@images[c(10)]),
+                 crop=T,
+                 size = 1,
+                 dark.background = F)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## SingleR analysis (not used)
+```{r play with SingleR (monaco immune), fig.height=12, fig.width = 10, eval=FALSE}
+# save before modifying metadata
+saveRDS(combined, file = paste0(baseDir, "04_Annotation/", Sys.Date(), "_04-prelimAnnot.RDS"))
+# use SingleR
+# seurat object -> SingleCellExperiment
+# assign cell types
+Idents(seuList[[1]]) <- "L4"
+other <- subset(seuList[[1]], idents = c("CD4+ T cell", "CD8+ T cell"), invert = T)
+Tc <- subset(seuList[[1]], idents = c("CD4+ T cell", "CD8+ T cell"))
+
+Tc <- FindNeighbors(Tc, 
+                       reduction = "integrated.rpca", 
+                       dims = 1:30)
+Tc <- FindClusters(Tc, 
+                      resolution = .5)
+     # Tc <- RunUMAP(Tc, 
+     #             reduction = "integrated.rpca", 
+     #             dims = 1:30, 
+     #             reduction.name = "umap.rpca.sub")
+    all_markers_pct <- FindAllMarkers(object = Tc, verbose = T, only.pos = T, logfc.threshold = 0.8) %>%
+      Add_Pct_Diff()
+    top40 <- Extract_Top_Markers(all_markers_pct, num_genes = 10, group_by = "cluster", rank_by = "pct.1", data_frame = T)
+
+DotPlot_scCustom(Tc, 
+                 features = c(rev(unique(top40$gene)), "TRAC"), 
+                 x_lab_rotate = T, 
+                 col.min = 0) + 
+  coord_flip() +
+  theme(panel.grid.major.y=element_line(size=0.1,colour="black"),
+        panel.grid.major.x=element_line(size=0.1,colour="black"))
+
+tcell <- c("CD4+ T cell",
+           "CD8+ T cell",
+           "CD8+ T cell", 
+           "T/B mix",
+           "CD8+ T cell",
+           "T/B mix",
+           "B cell",
+           "CD8+ T cell",
+           "T/Fib mix",
+           "Epi/T mix",
+           "CCR7+ cell",
+           "CXCL12+ cell",
+           "CD4+ cell")
+
+
+Tc <- Rename_Clusters(Tc, tcell)
+Tc$L4 <- Tc@active.ident
+
+meta <- Tc@meta.data
+meta2 <- other@meta.data
+meta <- bind_rows(meta,meta2)
+meta <- meta[c("L4")]
+seuList[[1]] <- AddMetaData(seuList[[1]], meta)
+
+meta <- list()
+for(i in 1:length(seuList)){
+  meta[[i]] <- seuList[[i]]@meta.data
+}
+meta <- bind_rows(meta)
+meta <- meta[c("L4")]
+combined <- AddMetaData(combined, meta)
+
+
+
+```
+
+```{r visualize after annotation, fig.height=28, fig.width=24, eval=F}
+plots <- list()
+Idents(combined) <- "L4"
+all_markers_L4 <- FindAllMarkers(object = combined, 
+                                verbose = F,
+                                logfc.threshold = 0.8,
+                                only.pos = T)
+fwrite(all_markers_L4,
+         file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/",
+                       Sys.Date(),
+                       "_L4_allMarkers.csv"))
+
+seuList <- SplitObject(combined, split.by = "L2B")
+for(i in 1:length(seuList)){
+  print(as.character(unique(seuList[[i]]$L2B)))
+  Idents(seuList[[i]]) <- "L4"
+  all_markers <-  all_markers_L4[all_markers_L4$cluster %in% levels(seuList[[i]]),]
+  if(length(row.names(all_markers)) > 0){
+    top <- Extract_Top_Markers(marker_dataframe = all_markers, num_genes = 10, rank_by = "pct.1")
+    plots[[i]] <- DotPlot_scCustom(seuList[[i]],
+                   features = rev(unique(c(top))),
+                   col.min = 0,
+                   x_lab_rotate = T)+
+          coord_flip() +
+    theme(panel.grid.major.y=element_line(size=0.1,colour="black"),
+          panel.grid.major.x=element_line(size=0.1,colour="black"))
+
+
+  }
+  # CairoPDF(file=paste0("/home/williamsdrw/xenium-hu-hvp/05_plots/02_expl_plots/", 
+  #                      Sys.Date, 
+  #                      "_",
+  #                      as.character(unique(seuList[[i]]$L2B)),
+  #                      "all_clusterImageHighlight.pdf"), 
+  #          width = 22, 
+  #          height = 16)
+    # Cluster_Highlight_Image_DimPlot(seurat_object = seuList[[i]],
+  #                               fov = region[c(8,10)],
+  #                               split_by = "orig.ident",
+  #                               cluster_level = "L4",
+  #                               size = 0.05,
+  #                               isPdf = F,
+  #                               w = 22,
+  #                               h = 16,
+  #                               col = 2)
+  # # dev.off()
+}
+wrap_plots(plots, ncol = 4)
+Cluster_Highlight_Image_DimPlot(seurat_object = combined,
+                                fov = region[c(8,10)],
+                                split_by = "orig.ident",
+                                cluster_level = "L4",
+                                size = 0.05,
+                                isPdf = T,
+                                w = 22,
+                                h = 16,
+                                col=2)
+
+```
+
+
+
+```{r more SingleR, eval=F}
+immuneSCE <- as.SingleCellExperiment(scRNAseqData)
+
+# reference database
+mon.se <- MonacoImmuneData()
+blueprint <- BlueprintEncodeData()
+commonBlue <- intersect(rownames(scRNAseqData), rownames(blueprint))
+blueprint <- blueprint[commonBlue,]
+immuneSCE <- immuneSCE[commonBlue,]
+pred.mon.fine <- SingleR(test=immuneSCE, 
+                         ref=mon.se, 
+                         labels=mon.se$label.fine,
+                         de.method="classic", 
+                         fine.tune = TRUE, 
+                         assay.type.test = 1, 
+                         BPPARAM=MulticoreParam(8))
+pred.mon.course <- SingleR(test=immuneSCE, 
+                           ref=mon.se, 
+                           labels=mon.se$label.main,
+                           de.method="classic", 
+                           fine.tune = TRUE, 
+                           assay.type.test = 1, 
+                           BPPARAM=MulticoreParam(8))
+
+# label transfer
+scRNAseqData[["mon.fine"]] <- pred.mon.fine$labels
+scRNAseqData[["mon.course"]] <- pred.mon.course$labels
+Idents(scRNAseqData) <- "mon.fine"
+scRNAseqData <- RenameIdents(scRNAseqData,
+                   "Intermediate monocytes"="Monocyte",
+                   "Classical monocytes"="Monocyte",
+                   "Exhausted B cells"="B",
+                   "Effector memory CD8 T cells"="abT (CD8)",
+                   "Myeloid dendritic cells"="mDC",
+                   "T regulatory cells"="Treg",
+                   "Th1 cells"="abT (CD4)",
+                   "Th2 cells"="abT (CD4)",
+                   "Th1/Th17 cells"="abT (CD4)",
+                   "Switched memory B cells"="B",
+                   "Low-density basophils"="Mast",
+                   "Terminal effector CD4 T cells"="abT (CD4)",
+                   "Progenitor cells"="Mast",
+                   "Natural killer cells"="NK",
+                   "Non-switched memory B cells"="B",
+                   "Central memory CD8 T cells"="abT (CD8)",
+                   "Terminal effector CD8 T cells"="abT (CD8)",
+                   "Non classical monocytes"="Monocyte",
+                   "Plasmacytoid dendritic cells"="pDC",
+                   "Naive CD4 T cells"="abT (CD4)",
+                   "Vd2 gd T cells"="gd T",
+                   "Th17 cells"="abT (CD4)",
+                   "Follicular helper T cells"="abT (CD4)",
+                   "Plasmablasts"="Plasma",
+                   "MAIT cells"="abT (CD4)",
+                   "Naive CD8 T cells"="abT (CD8)",
+                   "Low-density neutrophils"="Neutrophil",
+                   "Non-Vd2 gd T cells"="gd T",
+                   "Naive B cells"="B")
+levels(scRNAseqData) <- c("abT (CD4)", "abT (CD8)", "gd T", "Treg", "NK",
+                "pDC", "B", "Plasma",
+                "Neutrophil", "Monocyte", "mDC", "Mast")
+scRNAseqData$L4B <- scRNAseqData@active.ident
+scRNAseqData$mon.fine <- NULL
+scRNAseqData$mon.course <- NULL
+
+meta2 <- scRNAseqData@meta.data
+meta3 <- other@meta.data
+meta <- list()
+for(i in 2:length(seuList)){
+  meta[[i]] <- seuList[[i]]@meta.data
+}
+meta <- bind_rows(meta)
+meta <- bind_rows(meta,meta2)
+meta <- bind_rows(meta,meta3)
+meta <- meta[c("L4B")]
+combined <- AddMetaData(combined, meta)
+
+seuList <- SplitObject(combined, split.by = "L2B")
+Idents(seuList[[1]]) <- "L4"
+mon.markers <- FindAllMarkers(seuList[[1]], only.pos = TRUE, logfc.threshold = 0.8)
+mon.mkr.top <- scCustomize::Extract_Top_Markers(mon.markers, num_genes=6, group_by = "cluster", rank_by = "pct.1", data_frame = T)
+
+print(DotPlot_scCustom(seuList[[1]],
+                   features = rev(unique(c(mon.mkr.top$gene))),
+                   col.min = 0,
+                   x_lab_rotate = T)+
+          coord_flip()+
+    theme(panel.grid.major.y=element_line(size=0.1,color="black"),
+          panel.grid.major.x=element_line(size=0.1,color="black"))
+)
+Cluster_Highlight_Image_DimPlot(seurat_object = seuList[[1]],
+                                fov = region[c(8,10)],
+                                split_by = "orig.ident",
+                                cluster_level = "L4B",
+                                size = 0.05,
+                                isPdf = F,
+                                w = 22,
+                                h = 16,
+                                col=1)
+
+```
+
+```{r more SingleR2, eval=F}
+p_load(SingleR, SingleCellExperiment,scater,BiocParallel)
+# use SingleR
+# seurat object -> SingleCellExperiment
+SCE <- as.SingleCellExperiment(combined)
+
+# reference database
+hpca.se <- HumanPrimaryCellAtlasData()
+blueprint <- BlueprintEncodeData()
+commonBlue <- intersect(rownames(combined), rownames(blueprint))
+blueprint <- blueprint[commonBlue,]
+SCE <- SCE[commonBlue,]
+pred.hpca.fine <- SingleR(test=SCE, 
+                         ref=hpca.se, 
+                         labels=hpca.se$label.fine,
+                         de.method="classic", 
+                         fine.tune = TRUE, 
+                         assay.type.test = 1, 
+                         BPPARAM=MulticoreParam(8))
+pred.hpca.course <- SingleR(test=SCE, 
+                           ref=hpca.se, 
+                           labels=hpca.se$label.main,
+                           de.method="classic", 
+                           fine.tune = TRUE, 
+                           assay.type.test = 1, 
+                           BPPARAM=MulticoreParam(8))
+
+# label transfer
+combined[["hpca.fine"]] <- pred.hpca.fine$labels
+combined[["hpca.course"]] <- pred.hpca.course$labels
+
+Idents(combined) <- "hpca.course"
+levels(combined) <- sort(levels(combined))
+combined$hpca.course <- combined@active.ident
+
+hpca.markers <- FindAllMarkers(combined, only.pos = TRUE)
+hpca.mkr.top <- hpca.markers %>%
+  group_by(cluster) %>%
+  top_n(n=20, wt=avg_log2FC)
+hpca.mkr.top2 <- hpca.markers %>%
+  group_by(cluster) %>%
+  top_n(n=20, wt=pct.1)
+fwrite(hpca.mkr.top,
+         file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/",
+                       Sys.Date(),
+                       "_HPCAcourse_allMarkers.csv"))
+
+Cluster_Highlight_Image_DimPlot(seurat_object = combined,
+                                fov = region[c(8,10)],
+                                split_by = "orig.ident",
+                                cluster_level = "hpca.course",
+                                sample = "All",
+                                size = 0.05,
+                                isPdf = T,
+                                w = 22,
+                                h = 16)
+
+strings <- c("NI",
+            "I",
+            "NI",
+            "NI",
+            "NI",
+            "I",
+            "I",
+            "NI",
+            "NI",
+            "NI",
+            "NI",
+            "NI",
+            "NI",
+            "I",
+            "NI",
+            "I",
+            "I",
+            "NI",
+            "NI",
+            "I",
+            "I",
+            "I",
+            "NI",
+            "NI",
+            "NI",
+            "NI",
+            "I",
+            "I",
+            "NI",
+            "I",
+            "I",
+            "I",
+            "NI",
+            "NI",
+            "I",
+            "NI")
+
+combined <- Rename_Clusters(combined, new_idents = strings)
+combined$hpca.superCourse <- combined@active.ident
+
+
+```
+
+
+
+## Vasilis presentation stuff
+
+```{r, fig.width=11, fig.height=11}
+
+pal <- paletteer_d("ggsci::nrc_npg")[c(1,3,4,9)]
+
+pal <- c(pal, "#FFFFFF")
+
+Idents(combined) <- "L2"
+combined <- RenameIdents(combined, "SMC" = "Endothelial")
+levels(combined) <- c("Endothelial", 
+                            "Fibroblast", 
+                            "Immune", 
+                            "Epithelial", 
+                            "Unclear")
+combined$L2 <- combined@active.ident
+
+ImageDimPlot(combined,
+             fov=region[c(8,10)],
+             group.by = "L2",
+             split.by = "status",
+             cols = pal,
+             size = 1,
+             crop=T,
+             dark.background = F) + plot_layout(guides = 'collect')
+
+
+```
+
+```{r, fig.height=12, fig.width=8}
+# Idents(combined) <- "L2"
+# Clustered_DotPlot(seurat_object = combined, 
+#                   features = c(top_L3B_uniq, 
+#                                top_L3B_uniq_pct), 
+#                   exp_color_min = 0)
+
+
+```
+
+```{r, fig.height=22, fig.width=22}
+# Idents(combined) <- "L4"
+# fn <- paste0(getwd(), "/05_plots/02_expl_plots/",Sys.Date(), "_fullDataset_L4_dotPlot.pdf")
+# CairoPDF(file=fn, width = 22, height = 22)
+# print(Clustered_DotPlot(seurat_object = combined, 
+#                   features = c(top_L4_uniq, 
+#                                top_L4_uniq_pct), 
+#                   exp_color_min = 0))
+# dev.off()
+```
+
+```{r, fig.width=7, fig.height=6}
+print(plot_stat_meta(combined, plot_type = "group_count", group_by = "pt.id", clusterLabel = "L2") +
+          theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=20, hjust=1)))
+print(plot_stat_meta(combined, plot_type = "prop_multi", group_by = "pt.id", clusterLabel = "L2") +
+          theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=20, hjust=1)))
+
+print(plot_stat_meta(combined, plot_type = "prop_fill", group_by = "pt.id", clusterLabel = "L2") + 
+        theme(axis.title.x = element_blank(),
+              axis.title.y = element_blank(),
+              axis.text.x = element_text(angle=20, hjust=1)))
+
+```
+
+```{r, fig.height=6, fig.width=5}
+seuList <- SplitObject(combined, split.by = "L2")
+seuList <- lapply(X = seuList, FUN = function(x) {
+    x <- FindNeighbors(x, 
+                       reduction = "integrated.rpca", 
+                       dims = 1:30)
+    x <- FindClusters(x, 
+                      resolution = 0.1,
+                      cluster.name = "sub.1")
+    x <- FindClusters(x, 
+                      resolution = 0.2,
+                      cluster.name = "sub.2")
+    x <- FindClusters(x, 
+                      resolution = 0.3,
+                      cluster.name = "sub.3")
+    x <- FindClusters(x, 
+                      resolution = 0.4,
+                      cluster.name = "sub.4")
+    x <- RunUMAP(x, 
+                 reduction = "integrated.rpca", 
+                 dims = 1:30, 
+                 reduction.name = "umap.rpca.sub")
+})
+
+# for(i in 1:1){
+for(i in 1:length(seuList)){
+  print(as.character(unique(seuList[[i]]$L2)))
+  print(clustree(seuList[[i]], prefix = "sub"))
+  Idents(seuList[[i]]) <- "sub.1"
+  # ord <- order(levels(seuList[[i]]$sub.1)) - 1
+  # seuList[[i]]$sub.1 <- factor(seuList[[i]]$sub.1, levels = ord)
+  # Idents(seuList[[i]]) <- "sub.1"
+  print(levels(seuList[[i]]))
+  fwrite(FindAllMarkers(seuList[[i]],
+                        only.pos = T,
+                        logfc.threshold = 0.8) %>%
+           group_by(cluster) %>%
+           arrange(cluster, desc(pct.1)),
+         file = paste0("/home/williamsdrw/xenium-hu-hvp/06_cluster_annotation/",
+                       Sys.Date(),
+                       "_",
+                       as.character(unique(seuList[[i]]$L2)),
+                       "_allMarkers.csv"))
+  all_markers <- FindAllMarkers(object = seuList[[i]], verbose = F)
+  all_markers <- all_markers %>%
+    group_by(cluster) %>%
+    arrange(desc(avg_log2FC)) %>%
+    arrange(cluster)
+  top_3 <- Extract_Top_Markers(marker_dataframe = all_markers, num_genes = 3, rank_by = "avg_log2FC")
+  top_3 <- c("KRT19", "KRT5", top_3)
+  print(Stacked_VlnPlot(seuList[[i]],
+                   features = rev(unique(top_3)),
+                   x_lab_rotate = T))
+
+Cluster_Highlight_Image_DimPlot(seuList[[i]],
+                                  fov = region[c(11)],
+                                  split_by = "orig.ident",
+                                  cluster_level = "sub.1",
+                                  sample = as.character(unique(seuList[[i]]$L2)),
+                                  isPdf = T,
+                                  size = 0.05,
+                                  w = 9,
+                                  h = 6)
+}
+
+V_Im <- c("Other",
+          "T cell",
+          "Other",
+          "Other",
+          "B cell",
+          "Langerhans",
+          rep("Other", 2),
+          "Mast",
+          rep("Other", 8))
+V_Ep1 <- c(rep("Epithelium", 4),
+           "Crev Epi",
+           rep("Epithelium", 2))
+V_Ep2 <- c(rep("Epithelium", 4),
+           "Crev Epi",
+           rep("Epithelium", 2))
+V_Fib <- c(rep("Other", 13))
+V_Un <- c(rep("Other", 13))
+V_En <- c(rep("Other", 9))
+V_S <- c(rep("Other", 5))
+
+```
+
+```{r, fig.height=6, fig.width=5}
+  print(DotPlot_scCustom(seuList[[5]],
+                   features = rev(unique(top_3)),
+                   col.min = 0)+
+          coord_flip())
+
+```
+
+```{r, fig.width=16, fig.height=10}
+exp <- ImageFeaturePlot(combined, 
+             fov = names(combined@images)[10], 
+             features = c("ODAM",
+                           "ODAPH", 
+                           "SAA1", 
+                           "SAA2", 
+                           "CXCL6", 
+                           "CSF3",
+                          "CXCL14", 
+                           "CNFN"
+                          # "SERPINB2",
+                          # "TRAC",
+                          # "CD8A",
+                          # "CD4",
+                          # "MZB1",
+                          # "CD19",
+                          # "MS4A1",
+                        # "IGHA1"
+                          ),
+             crop = T,
+             cols = c("navy", "yellow"),
+             combine = F)
+wrap_plots(exp, ncol = 2)
+
+```
+
+```{r}
+V_Im <- c("Other",
+          "Other",
+          "Other",
+          "Other",
+          "Other",
+          "Langerhans",
+          rep("Other", 2),
+          "Mast",
+          rep("Other", 8))
+V_Im3 <- c("Other",
+          "T cell",
+          "Other",
+          "Other",
+          "Other",
+          "Other",
+          rep("Other", 2),
+          "Other",
+          rep("Other", 8))
+V_Im2 <- c(rep("Other", 17))
+V_Ep1 <- c(rep("Epi", 4),
+           "Crev Epi",
+           rep("Epi", 2))
+V_Ep2 <- c("Epi 1",
+           "Epi 2",
+           "Epi 3",
+           "Epi 4",
+           "Epi 5",
+           "Epi 6",
+           "Epi 7")
+V_Fib <- c(rep("Other", 13))
+V_Un <- c(rep("Other", 13))
+V_En <- c(rep("Other", 9))
+V_S <- c(rep("Other", 5))
+
+# annot1 <- list(V_Im,
+#               V_Fib,
+#               V_Un,
+#               V_En,
+#               V_Ep1,
+#               V_S)
+# 
+# for(i in 1:length(seuList)){
+# Idents(seuList[[i]]) <- "sub.2"
+# seuList[[i]] <- Rename_Clusters(seuList[[i]], new_idents = annot1[[i]])
+# seuList[[i]]$Vas_1 <- seuList[[i]]@active.ident
+# print(annot1[[i]])
+# }
+# 
+# meta <- list()
+# for(i in 1:length(seuList)){
+#   meta[[i]] <- seuList[[i]]@meta.data
+# }
+# meta <- bind_rows(meta)
+# meta <- meta[c("Vas_1")]
+# combined <- AddMetaData(combined, meta)
+
+annot2 <- list(V_Im2,
+              V_Fib,
+              V_Un,
+              V_En,
+              V_Ep2,
+              V_S)
+
+for(i in 1:length(seuList)){
+Idents(seuList[[i]]) <- "sub.2"
+seuList[[i]] <- Rename_Clusters(seuList[[i]], new_idents = annot2[[i]])
+seuList[[i]]$Vas_2 <- seuList[[i]]@active.ident
+print(annot2[[i]])
+}
+
+meta <- list()
+for(i in 1:length(seuList)){
+  meta[[i]] <- seuList[[i]]@meta.data
+}
+meta <- bind_rows(meta)
+meta <- meta[c("Vas_2")]
+combined <- AddMetaData(combined, meta)
+
+annot3 <- list(V_Im3, 
+              V_Fib,
+              V_Un, 
+              V_En,
+              V_Ep1,
+              V_S)
+
+for(i in 1:length(seuList)){
+Idents(seuList[[i]]) <- "sub.2"
+seuList[[i]] <- Rename_Clusters(seuList[[i]], new_idents = annot3[[i]])
+seuList[[i]]$Vas_3 <- seuList[[i]]@active.ident
+print(annot3[[i]])
+}
+
+meta <- list()
+for(i in 1:length(seuList)){
+  meta[[i]] <- seuList[[i]]@meta.data
+}
+meta <- bind_rows(meta)
+meta <- meta[c("Vas_3")]
+combined <- AddMetaData(combined, meta)
+
+```
+
+```{r, fig.height=10, fig.width=10}
+
+# colors <- scCustomize_Palette(num_groups = 7, ggplot_default_colors = FALSE)
+# ImageDimPlot(combined, 
+#              fov = region[3],
+#              group.by = "Vas_2",
+#              crop = T,
+#              cols = c("navy",
+#                       colors),
+#              size = 0.75
+#              )
+# ImageDimPlot(combined, 
+#              fov = region[3],
+#              group.by = "Vas_1",
+#              crop = T,
+#              cols = c("navy",
+#                       "white",
+#                       "magenta",
+#                       "dodgerblue",
+#                       "orange"),
+#              size = 0.75
+#              )
+ImageDimPlot(combined, 
+             fov = region[3],
+             group.by = "Vas_3",
+             crop = T,
+                          cols = c("navy",
+                      "#CC79A7",
+                      "#009E73",
+                      "orange"),
+             size = 0.75
+             )
+```
+
+```{r}
+# save prelim annotation
+saveRDS(combined, file = paste0("/home/williamsdrw/xenium-hu-hvp/04_data_objects/05_Analysis/", Sys.Date(), "_05.RDS"))
+```
+
+
+## Session Info
+```{r session info}
+sessionInfo()
+```
+

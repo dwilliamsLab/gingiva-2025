@@ -1,0 +1,229 @@
+---
+title: "Analyze LAD dataset"
+author: "Drake Williams"
+date: "`r BiocStyle::doc_date()`"
+output:   
+  pdf_document:
+    dev: cairo_pdf
+knit: (function(inputFile, encoding) { 
+    rmarkdown::render(
+        inputFile, encoding = encoding, 
+        output_file = file.path(
+            dirname(inputFile), paste0('05_01_gingivaIL23Analysis_',Sys.Date(),'.html'))) 
+                })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = F,
+  message = F, 
+  out.width = "100%",
+  fig.align = "center",
+  time_it = T
+)
+options(width = 1200)
+```
+
+# Introduction
+
+The objective of this notebook is to analyze gingiva dataset for IL23 expression
+
+## Load packages
+```{r}
+library(pacman)
+p_load(Seurat,
+       dplyr,
+       scCustomize)
+```
+
+```{r, fig.height=8, fig.width=20}
+oralIntegrated <- readRDS("~/updatedAtlas-hu/04_data_objects/03_Analysis_objects/2023-05-05_04_02-AnnotationOutput.RDS")
+
+#### integration with downsampling ####
+
+
+# Rename idents so that all health are same name, but stat1 pts are separated
+Idents(oralIntegrated) <- "ref"
+oralIntegrated <- subset(oralIntegrated,
+                         idents = "Williams 2021")
+Idents(oralIntegrated) <- "orig.ident"
+oralIntegrated <- subset(oralIntegrated,
+                         idents = c("HV136",
+                                    "HV143",
+                                    "HV144",
+                                    "HV147",
+                                    "HV148",
+                                    "TM183",
+                                    "TM184a",
+                                    "TM238",
+                                    "TM241",
+                                    "TM242",
+                                    "HV169B",
+                                    "TM283",
+                                    "TM289"))
+
+oralIntegrated <- RenameIdents(oralIntegrated,
+                               "HV136" = "HC",
+                               "HV143" = "HC",
+                               "HV144" = "HC",
+                               "HV147" = "HC",
+                               "HV148" = "HC",
+                               "TM183" = "HC",
+                               "TM184a" = "HC",
+                               "TM238" = "HC",
+                               "TM241" = "HC",
+                               "TM242" = "HC",
+                               "HV169B" = "HC",
+                               "TM283" = "HC",
+                               "TM289" = "HC"
+)
+levels(oralIntegrated) <- c("HC")
+oralIntegrated$healthStatus <- oralIntegrated@active.ident
+Idents(oralIntegrated) <- "healthStatus"
+
+Idents(oralIntegrated) <- "generalCellTypes"
+epi_HvL <- subset(oralIntegrated, idents = c("Epithelial"))
+
+DefaultAssay(epi_HvL) <- "integrated"
+epi_HvL <- FindVariableFeatures(epi_HvL, nfeatures = 4000)
+epi_HvL <- ScaleData(epi_HvL, verbose = TRUE)
+epi_HvL <- RunPCA(epi_HvL, npcs = 50, verbose = TRUE)
+epi_HvL <- FindNeighbors(epi_HvL, reduction = "pca", dims = 1:50)
+epi_HvL <- FindClusters(epi_HvL, resolution = 0.1)
+
+mkr <- FindAllMarkers(epi_HvL, only.pos = T)
+significant.markers.1 <- mkr[mkr$p_val_adj < 0.2, ]
+# Print some top markers
+mkr2 <- significant.markers.1 %>%
+  group_by(cluster) %>%
+  top_n(n = 10, wt = avg_log2FC)
+
+# remove cluster 5; apparent Neuron cluster
+# epi_HvL <- subset(epi_HvL,
+#                   idents = c("5"),
+#                   invert = T)
+epi_HvL <- RunUMAP(epi_HvL, reduction = "pca", dims = 1:50)
+
+Idents(epi_HvL) <- "integrated_snn_res.0.1"
+VlnPlot_scCustom(epi_HvL,
+                     features = c("CXCL1", "CXCL2", "CXCL6"), 
+                     pt.size = 1)
+
+
+# generate a seurat object with bulk expression based on cell type, disease status, and donor
+bulk2 <- AggregateExpression(epi_HvL, 
+                              return.seurat = T, 
+                              slot = "counts", 
+                              assays = "RNA", 
+                              group.by = c("clusterCellTypes","orig.ident"))
+  bulk2$celltype <- sapply(strsplit(Cells(bulk2), split = "_"), "[", 1)
+  bulk2$donor <- sapply(strsplit(Cells(bulk2), split = "_"), "[", 2)
+VlnPlot_scCustom(bulk2,
+                     features = c("CXCL1", "CXCL2", "CXCL6"), 
+                     pt.size = 1,
+                 group.by = "celltype")
+
+epi_HvL <- RunDEtest(srt = epi_HvL, group_by = "integrated_snn_res.0.1", fc.threshold = 1, only.pos = FALSE)
+epi_HvL <- RunEnrichment(
+  srt = epi_HvL, group_by = "integrated_snn_res.0.1", db = "GO_BP", species = "Homo_sapiens",
+  DE_threshold = "avg_log2FC > log2(1.5) & p_val_adj < 0.05"
+)
+EnrichmentPlot(
+  srt = epi_HvL, group_by = "integrated_snn_res.0.1", group_use = c(unique(epi_HvL$celltype)),
+  plot_type = "bar"
+)
+
+EnrichmentPlot(srt = epi_HvL, group_by = "integrated_snn_res.0.1", plot_type = "comparison")
+
+
+epi_HvL$celltype <- epi_HvL$integrated_snn_res.0.1
+Idents(epi_HvL) <- "integrated_snn_res.0.1"
+epi.expressed <- getExpressedGenesFromSeuratObject(epi_HvL, 
+                                                    unique(epi_HvL@active.ident), 
+                                                    min.pct = 0.25)
+#annotation <- fetchAnnotation(species = "hs")
+
+epiMarkers.gsf <- FindAllMarkers(epi_HvL, 
+                                  only.pos = TRUE, 
+                                  min.pct = 0.25, 
+                                  logfc.threshold = 0.25)
+epiMarkers.gsf$entrezID <- as.character(annotation$entrez_id[match(epiMarkers.gsf$gene, 
+                                                                    annotation$gene_name)])
+epiMarkers.gsf <- epiMarkers.gsf[!is.na(epiMarkers.gsf$entrezID),]
+background_entrez <- as.character(annotation$entrez_id[match(epi.expressed, 
+                                                             annotation$gene_name)])
+background_entrez <- background_entrez[!is.na(background_entrez)]
+
+epiMarkers.gsf.filtered <- epiMarkers.gsf[epiMarkers.gsf$p_val_adj < 0.05,]
+epiGO <- runGO.all(results=epiMarkers.gsf.filtered,
+                    species = "hs",
+                    background_ids = background_entrez,
+                    gene_id_col="entrezID",
+                    gene_id_type="entrez",
+                    sample_col="cluster",
+                    p_col="p_val_adj",
+                    p_threshold=0.05)
+
+epiGO.filtered <- epiGO[epiGO$ontology=="BP",]
+epiGO.filtered <- filterGenesets(epiGO.filtered,
+                                  min_foreground_genes = 2,
+                                  max_genes_geneset = 500,
+                                  min_odds_ratio = 2,
+                                  p_col = "p.val",
+                                  padjust_method = "BH",
+                                  use_adjusted_pvalues = FALSE,
+                                  pvalue_threshold = 0.05)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+DefaultAssay(epi_HvL) <- "RNA"
+# epi_dim2 <- Cluster_Highlight_Plot(seurat_object = epi_HvL, cluster_name = "3", highlight_color = "navy",
+#                        background_color = "lightgray")
+Vln
+
+epi_dim2 <- DimPlot_scCustom(epi_HvL,
+                    label = F,
+                    colors_use = c("gray", "gray", "red", "navy", "gray"),
+                    pt.size = 1, 
+                    shuffle = T,
+                    group.by = "integrated_snn_res.0.1")
+
+epi_3 <- subset(epi_HvL, idents = c("3"))
+
+Idents(epi_3) <- "healthStatus"
+epi_vln <- VlnPlot(
+  epi_3,
+  features = "IL23A", 
+  group.by = "healthStatus",
+  pt.size = 0
+) + 
+  ggtitle("IL23A") + 
+  theme_ggprism_mod() + 
+  theme(axis.title.x = element_blank(), 
+        title = element_text(size = 9, face = "italic"),
+        axis.text = element_text(size = 9)) + 
+  guides(fill = "none")
+
+
+
+cairo_pdf(filename="/home/williamsdrw/epithelial-IL23/08_final_plots_for_figures/IL23A-oral.pdf",
+          width=5,
+          height=8)
+epi_dim1 / (epi_dim2 + inset_element(epi_vln, left = -.2, bottom = -.2, right = .13, top = 0.26))
+dev.off()
+```
