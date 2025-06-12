@@ -1,0 +1,12 @@
+ , ,CD45,Vimentin,CD138,CD3,CD4,aSMA,CD31,MPO,MCT,HLA-DR,CK19,PanCK,Ki67,CD8a,Thy-1,S100a8-9,Hoechst,CD20,CK5
+all,immune-other,anypos,pos, ,anypos,anypos,allneg, ,anypos,anypos,  , , ,  ,anypos, , ,  ,anypos, 
+immune-other,plasma cells, , ,pos, , ,allneg, , ,  , ,allneg,allneg,  ,  ,allneg,allneg,  , ,allneg
+immune-other,b cell, , ,allneg,allneg, ,allneg,allneg,allneg,  ,  ,allneg,allneg,  ,  ,allneg, , ,pos,allneg
+immune-other,T cell, , , ,pos,anypos,  , ,  ,  , , , ,  ,anypos, ,  ,  ,   , 
+immune-other,neutrophils, , , ,  ,  ,  , ,pos,  ,  , , ,  ,  , , ,  ,  , 
+immune-other,mast cells,  ,  ,  ,  ,  ,  ,  ,  ,pos,  , ,  ,  ,  ,  ,  ,  ,  , 
+immune-other,APCs-immune,  ,  , ,allneg, ,allneg,allneg,allneg,allneg,pos,neg,neg,  ,  ,allneg,  ,  ,allneg,neg
+all,epithelial,neg,allneg,anypos, , ,  , ,allneg,  ,  ,anypos,anypos,  ,  , ,  ,  ,  ,anypos
+all,fibroblast,allneg,pos,allneg, ,  ,allneg,allneg, , , , , ,  ,  , , , , , 
+all,endothelial,neg,pos,allneg,allneg, ,  ,pos,allneg, , ,allneg, ,  ,  , , , , ,allneg
+all,SMC,neg,pos, ,allneg, ,pos, ,allneg,  ,  ,  ,  ,  ,  , , , , , 
